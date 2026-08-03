@@ -1,11 +1,11 @@
 {
   "name": "society-portal-backend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Backend API for the TIET Society Portal",
   "main": "src/server.js",
   "private": true,
   "scripts": {
-    "dev": "nodemon --exec \"node src/server.js\" --watch src --ext js,json",
+    "dev": "nodemon src/server.js",
     "start": "node src/server.js"
   },
   "keywords": [],
