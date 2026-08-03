@@ -1,0 +1,28 @@
+{
+  "name": "society-portal-backend",
+  "version": "0.1.0",
+  "description": "Backend API for the TIET Society Portal",
+  "main": "src/server.js",
+  "private": true,
+  "scripts": {
+    "dev": "nodemon --exec \"node src/server.js\" --watch src --ext js,json",
+    "start": "node src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "mongoose": "^9.9.1",
+    "morgan": "^1.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
