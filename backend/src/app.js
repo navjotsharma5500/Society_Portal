@@ -7,6 +7,8 @@ const morgan = require("morgan");
 const environment = require("./config/environment");
 const healthRoutes = require("./modules/health/health.routes");
 const societyRoutes = require("./modules/societies/society.routes");
+const societyImportRoutes = require("./modules/societyImports/societyImport.routes");
+const societyLeadershipRoutes = require("./modules/societyLeadership/societyLeadership.routes");
 const notFound = require("./common/middleware/notFound.middleware");
 const errorMiddleware = require("./common/middleware/error.middleware");
 
@@ -30,6 +32,8 @@ if (environment.nodeEnv === "development") {
 
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/societies", societyRoutes);
+app.use("/api/v1/society-imports", societyImportRoutes);
+app.use("/api/v1/society-leadership", societyLeadershipRoutes);
 
 app.use(notFound);
 app.use(errorMiddleware);
