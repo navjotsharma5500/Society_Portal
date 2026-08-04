@@ -1,0 +1,16 @@
+:root {
+  --cc-primary:#86172c;--cc-primary-dark:#61101f;--cc-primary-soft:#f8e9ed;--cc-primary-glow:rgba(134,23,44,.16);
+  --cc-navy:#272845;--cc-background:#f4f5f8;--cc-surface:#fff;--cc-surface-soft:#faf9fa;
+  --cc-lavender:#c7b4ff;--cc-peach:#ffe2b7;--cc-lime:#e9f94a;--cc-mint:#dff4e7;
+  --cc-text:#202234;--cc-muted:#747785;--cc-border:#e5e6ec;--cc-success:#277451;--cc-warning:#9a5b13;--cc-danger:#b4233a;
+  --cc-radius-sm:10px;--cc-radius-md:16px;--cc-radius-lg:24px;--cc-radius-pill:999px;
+  --cc-space-1:4px;--cc-space-2:8px;--cc-space-3:12px;--cc-space-4:16px;--cc-space-5:20px;--cc-space-6:24px;--cc-space-8:32px;
+  --cc-shadow-sm:0 3px 12px rgba(39,40,69,.05);--cc-shadow-card:0 10px 28px rgba(39,40,69,.07);--cc-shadow-float:0 18px 42px rgba(39,40,69,.14);
+  --cc-font:"Inter","Plus Jakarta Sans","Segoe UI",sans-serif;--cc-body-mobile:13.5px;--cc-body-desktop:14.5px;
+  --cc-title-mobile:18px;--cc-title-desktop:21px;--cc-section-mobile:16px;--cc-section-desktop:18px;--cc-hero-mobile:28px;--cc-hero-desktop:34px;
+  --cc-transition:160ms ease;--cc-focus:0 0 0 3px var(--cc-primary-glow);--cc-content-max:1240px;
+  --cc-z-header:30;--cc-z-nav:35;--cc-z-modal:60;--cc-z-toast:100;
+  /* Compatibility aliases during the v1 migration. */
+  --color-primary:var(--cc-primary);--color-primary-dark:var(--cc-primary-dark);--color-primary-soft:var(--cc-primary-soft);--color-background:var(--cc-background);--color-surface:var(--cc-surface);--color-text:var(--cc-text);--color-muted:var(--cc-muted);--color-border:var(--cc-border);--color-success:var(--cc-success);--color-warning:var(--cc-warning);--color-danger:var(--cc-danger);--radius-small:var(--cc-radius-sm);--radius-medium:var(--cc-radius-md);--radius-large:var(--cc-radius-lg);--shadow-card:var(--cc-shadow-card);
+  font-family:var(--cc-font);color:var(--cc-text);background:var(--cc-background);font-synthesis:none;
+}

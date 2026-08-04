@@ -3,6 +3,7 @@ const AppError = require("../../common/errors/AppError");
 const Society = require("../societies/society.model");
 const repository = require("./societyLeadership.repository");
 const { LEADERSHIP_ROLES, LEADERSHIP_STATUSES } = require("./societyLeadership.constants");
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id) && /^[a-f\d]{24}$/i.test(id);
 
@@ -144,7 +145,9 @@ const getActiveSocietyApprovers = async (societyId, academicSession) => {
 const createLeadershipFromImportPreview = async ({ societyId, presidentPreview, academicSession }) => {
   const name = presidentPreview?.name?.trim();
   const email = presidentPreview?.email?.trim().toLowerCase();
-  if (!name || !email) return { skipped: true, reason: "PRESIDENT_NAME_OR_EMAIL_MISSING" };
+  if (!name) return { status: "SKIPPED", reason: "PRESIDENT_NAME_MISSING" };
+  if (!email) return { status: "SKIPPED", reason: "PRESIDENT_EMAIL_MISSING" };
+  if (!EMAIL_PATTERN.test(email)) return { status: "SKIPPED", reason: "PRESIDENT_EMAIL_INVALID" };
   const data = {
     societyId,
     role: LEADERSHIP_ROLES.PRESIDENT,
@@ -152,12 +155,27 @@ const createLeadershipFromImportPreview = async ({ societyId, presidentPreview, 
     email,
     designation: presidentPreview.designation?.trim() || undefined,
     academicSession,
+    isOngoing: true,
+    status: LEADERSHIP_STATUSES.ACTIVE,
+    notificationEnabled: true,
     metadata: { importSource: "SOCIETY_EXCEL", importedFromPresidentPreview: true },
   };
-  if (await repository.findDuplicateAssignment(duplicateFields(data))) {
-    return { skipped: true, reason: "LEADERSHIP_ASSIGNMENT_EXISTS" };
+  try {
+    if (await repository.findDuplicateAssignment(duplicateFields(data))) {
+      return { status: "DUPLICATE", reason: "LEADERSHIP_ASSIGNMENT_EXISTS" };
+    }
+    const leadership = await createLeadershipAssignment(data);
+    return { status: "CREATED", reason: null, leadership };
+  } catch (error) {
+    if (error.code === "LEADERSHIP_ASSIGNMENT_EXISTS" || error.code === 11000) {
+      return { status: "DUPLICATE", reason: "LEADERSHIP_ASSIGNMENT_EXISTS" };
+    }
+    return {
+      status: "FAILED",
+      reason: error.code || "LEADERSHIP_CREATION_FAILED",
+      error: error.message,
+    };
   }
-  return { skipped: false, leadership: await createLeadershipAssignment(data) };
 };
 
 module.exports = {

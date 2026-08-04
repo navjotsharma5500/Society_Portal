@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const AppError = require("../../common/errors/AppError");
 const repository = require("./society.repository");
 const { SOCIETY_STATUSES } = require("./society.constants");
+const { prepareSocietyCode } = require("./societyCode.service");
 
 const assertValidId = (id) => {
   if (!mongoose.Types.ObjectId.isValid(id) || !/^[a-f\d]{24}$/i.test(id)) {
@@ -37,10 +38,17 @@ const synchronizeStatus = (data) => {
 };
 
 const createSociety = async (data) => {
-  if (await repository.findByCode(data.code)) throwCodeExists();
+  const prepared = await prepareSocietyCode({
+    suppliedCode: data.code,
+    name: data.name,
+    campus: data.metadata?.campus,
+    isCodeTaken: async (code) => Boolean(await repository.findByCode(code)),
+  });
+  if (!prepared.code) throw new AppError("Unable to generate a unique society code", 409, "SOCIETY_CODE_GENERATION_FAILED");
+  if (!prepared.regenerated && await repository.findByCode(prepared.code)) throwCodeExists();
 
   try {
-    return await repository.create(synchronizeStatus(data));
+    return await repository.create(synchronizeStatus({ ...data, code: prepared.code }));
   } catch (error) {
     return handleDuplicateCode(error);
   }

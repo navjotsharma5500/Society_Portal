@@ -1,0 +1,4 @@
+import { NavLink } from 'react-router-dom'
+import { navigationItems } from './navConfig'
+import { useToast } from '../common/toastContext'
+export default function DesktopSidebar(){const{notify}=useToast();return <aside className="sidebar desktop-only"><div className="brand"><strong>TIET Society Portal</strong><span>Super Admin Console</span></div><nav className="sidebar-nav" aria-label="Primary navigation">{navigationItems.map(({label,to,icon:Icon})=>to?<NavLink key={label} end={to==='/admin'} to={to} className={({isActive})=>`nav-item ${isActive?'active':''}`}><Icon size={19}/>{label}</NavLink>:<button key={label} className="nav-item" onClick={()=>notify(`${label} is coming soon`,'info')}><Icon size={19}/>{label}</button>)}</nav><div className="sidebar-spacer" aria-hidden="true"/></aside>}

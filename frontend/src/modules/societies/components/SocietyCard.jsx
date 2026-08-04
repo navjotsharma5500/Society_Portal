@@ -1,0 +1,6 @@
+import { Eye, Pencil, Power } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import AppButton from '../../../components/common/AppButton'
+import StatusBadge from '../../../components/common/StatusBadge'
+import { displayValue } from '../../../utils/formatters'
+export default function SocietyCard({society,onEdit,onStatus}){return <article className="card society-card"><div className="society-top"><div><h3>{society.name}</h3><span className="muted">{society.code}</span></div><StatusBadge status={society.status}/></div><div className="society-meta"><div>Category<strong>{displayValue(society.category)}</strong></div><div>Session<strong>{displayValue(society.academicSession)}</strong></div><div style={{gridColumn:'1/-1'}}>Official email<strong>{displayValue(society.email)}</strong></div></div><div className="card-actions"><Link className="button button-ghost" to={`/admin/societies/${society._id}`}><Eye size={17}/>View</Link><AppButton variant="secondary" onClick={()=>onEdit(society)}><Pencil size={17}/>Edit</AppButton><AppButton variant={society.isActive?'danger':'primary'} onClick={()=>onStatus(society)}><Power size={17}/>{society.isActive?'Deactivate':'Activate'}</AppButton></div></article>}

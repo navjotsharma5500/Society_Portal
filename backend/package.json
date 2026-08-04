@@ -1,6 +1,6 @@
 {
   "name": "society-portal-backend",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Backend API for the TIET Society Portal",
   "main": "src/server.js",
   "private": true,

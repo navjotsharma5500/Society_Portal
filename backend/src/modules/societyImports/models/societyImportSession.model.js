@@ -9,6 +9,8 @@ const schema = new mongoose.Schema({
   warningRows: { type: Number, required: true },
   invalidRows: { type: Number, required: true },
   normalizedRows: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  importSummary: { type: mongoose.Schema.Types.Mixed, default: null },
+  importResults: { type: [mongoose.Schema.Types.Mixed], default: [] },
   createdAt: { type: Date, default: Date.now },
   expiresAt: { type: Date, required: true },
   importedAt: Date,

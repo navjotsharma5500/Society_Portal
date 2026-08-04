@@ -60,9 +60,6 @@ const validateFields = (data) => {
   if (data.name !== undefined && (data.name.length < 2 || data.name.length > 150)) {
     throw validationError("name must be between 2 and 150 characters");
   }
-  if (data.code !== undefined && data.code.length === 0) {
-    throw validationError("code cannot be empty");
-  }
   if (data.category !== undefined && data.category.length === 0) {
     throw validationError("category cannot be empty");
   }
@@ -89,7 +86,7 @@ const validateFields = (data) => {
 const validateCreate = (req, res, next) => {
   try {
     const data = normalizeBody(req.body || {});
-    for (const field of ["name", "code", "category"]) {
+    for (const field of ["name", "category"]) {
       if (!data[field]) throw validationError(`${field} is required`);
     }
     validateFields(data);

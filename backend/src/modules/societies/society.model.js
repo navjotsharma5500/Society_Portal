@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { SOCIETY_STATUSES } = require("./society.constants");
+const { CODE_PATTERN } = require("./societyCode.service");
 
 const societySchema = new mongoose.Schema(
   {
@@ -16,6 +17,9 @@ const societySchema = new mongoose.Schema(
       unique: true,
       uppercase: true,
       trim: true,
+      minlength: 6,
+      maxlength: 10,
+      match: CODE_PATTERN,
     },
     shortName: { type: String, trim: true, maxlength: 50 },
     description: { type: String, trim: true, maxlength: 2000 },

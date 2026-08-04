@@ -1,0 +1,4 @@
+import { useCallback, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { ToastContext } from './toastContext'
+export function ToastProvider({children}){const[toasts,setToasts]=useState([]);const notify=useCallback((message,type='info')=>{const id=crypto.randomUUID();setToasts(v=>[...v,{id,message,type}]);setTimeout(()=>setToasts(v=>v.filter(t=>t.id!==id)),3500)},[]);const value=useMemo(()=>({notify}),[notify]);return <ToastContext.Provider value={value}>{children}<div className="toast-region" aria-live="polite"><AnimatePresence>{toasts.map(t=><motion.div key={t.id} className={`toast toast-${t.type}`} initial={{opacity:0,y:-12}} animate={{opacity:1,y:0}} exit={{opacity:0}}>{t.message}</motion.div>)}</AnimatePresence></div></ToastContext.Provider>}

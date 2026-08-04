@@ -1,0 +1,1 @@
+export default function DashboardStatCard({icon:Icon,label,value,tone}){return <article className="cc-card cc-stat-card stat-card" data-tone={tone}><div className="stat-card-icon"><Icon size={20}/></div><div className="stat-value">{value}</div><div className="stat-label">{label}</div></article>}

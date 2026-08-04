@@ -22,7 +22,7 @@ const getSession = async (req, res) => {
 
 const confirm = async (req, res) => {
   const data = await service.confirmImport(req.params.importSessionId);
-  res.status(200).json({ success: true, message: "Societies imported successfully", data });
+  res.status(200).json({ success: true, message: "Society import completed", data });
 };
 
 module.exports = { downloadTemplate, preview, getSession, confirm };

@@ -1,7 +1,9 @@
 const ExcelJS = require("exceljs");
-const mongoose = require("mongoose");
 const AppError = require("../../common/errors/AppError");
 const Society = require("../societies/society.model");
+const societyService = require("../societies/society.service");
+const { createLeadershipFromImportPreview } = require("../societyLeadership/societyLeadership.service");
+const { prepareSocietyCode, isValidSocietyCode } = require("../societies/societyCode.service");
 const Session = require("./models/societyImportSession.model");
 const {
   IMPORT_STATUSES,
@@ -25,9 +27,20 @@ const cleanText = (value) => {
 const cleanEmail = (value) => cleanText(value)?.replace(/\s/g, "").toLowerCase() || null;
 const normalizeKey = (value) => (cleanText(value) || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const normalizeName = (value) => normalizeKey(value);
-const normalizeCode = (value) => (cleanText(value) || "")
-  .toUpperCase().replace(/[._\s/'-]+/g, "_").replace(/[^A-Z0-9_]/g, "")
-  .replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, 40);
+const normalizeEntityType = (value) => {
+  const key = normalizeKey(value);
+  const mappings = {
+    society: ENTITY_TYPES.SOCIETY,
+    societies: ENTITY_TYPES.SOCIETY,
+    club: ENTITY_TYPES.CLUB,
+    clubs: ENTITY_TYPES.CLUB,
+    "student chapter": ENTITY_TYPES.STUDENT_CHAPTER,
+    chapter: ENTITY_TYPES.STUDENT_CHAPTER,
+    cell: ENTITY_TYPES.CELL,
+    cells: ENTITY_TYPES.CELL,
+  };
+  return mappings[key] || null;
+};
 
 const headerAliases = {
   name: ["society", "club", "club society", "society club", "society name"],
@@ -48,7 +61,10 @@ const identifyHeaders = (values) => {
       if (aliases.includes(key)) headers[field] = index;
     }
   });
-  return headers.name !== undefined && Object.keys(headers).length >= 2 ? headers : null;
+  const hasIdentityColumn = ["code", "officialEmail", "presidentEmail"].some(
+    (field) => headers[field] !== undefined
+  );
+  return headers.name !== undefined && hasIdentityColumn ? headers : null;
 };
 
 const identifySection = (values) => {
@@ -64,23 +80,6 @@ const parsePresident = (value, explicitDesignation) => {
     email: null,
     designation: cleanText(explicitDesignation) || (lines.length > 1 ? lines.slice(1).join(" ") : null),
   };
-};
-
-const makeUniqueCode = (base, campus, usedCodes) => {
-  if (!base) return null;
-  const withSuffix = (suffix) => {
-    const normalizedSuffix = normalizeCode(suffix);
-    return `${base.slice(0, Math.max(1, 39 - normalizedSuffix.length))}_${normalizedSuffix}`;
-  };
-  const candidates = [base, withSuffix(campus)];
-  for (const candidate of candidates) if (candidate && !usedCodes.has(candidate)) return candidate;
-  let suffix = 2;
-  while (suffix < 10000) {
-    const candidate = withSuffix(`${campus}_${suffix}`);
-    if (!usedCodes.has(candidate)) return candidate;
-    suffix += 1;
-  }
-  return null;
 };
 
 const getFirstNonEmptyWorksheet = (workbook) => workbook.worksheets.find((sheet) => {
@@ -109,7 +108,7 @@ const parseWorkbookRows = async (buffer, requestSession) => {
     const at = (field) => headers[field] === undefined ? null : values[headers[field]];
     const name = cleanText(at("name"));
     if (!name) return;
-    const entityType = cleanText(at("entityType"))?.toUpperCase().replace(/[\s/-]+/g, "_") || section?.entityType || null;
+    const entityType = normalizeEntityType(at("entityType")) || section?.entityType || null;
     const campus = cleanText(at("campus"))?.toUpperCase().replace(/[\s-]+/g, "_") || section?.campus || null;
     const president = parsePresident(at("president"), at("presidentDesignation"));
     president.email = cleanEmail(at("presidentEmail"));
@@ -127,7 +126,9 @@ const normalizeAndValidateRows = async (rawRows) => {
   const existing = await Society.find({}, { code: 1, email: 1, name: 1, metadata: 1 }).lean();
   const existingCodes = new Set(existing.map((item) => item.code));
   const usedCodes = new Set(existingCodes);
-  const uploadKeys = new Set();
+  const uploadNames = new Set();
+  const uploadEmails = new Set();
+  const uploadSuppliedCodes = new Set();
   const rows = [];
 
   for (const raw of rawRows) {
@@ -135,10 +136,17 @@ const normalizeAndValidateRows = async (rawRows) => {
     const errors = [];
     if (!raw.name) errors.push("SOCIETY_NAME_MISSING");
     if (!raw.sectionRecognized || !Object.values(ENTITY_TYPES).includes(raw.entityType) || !Object.values(CAMPUSES).includes(raw.campus)) errors.push("SECTION_NOT_RECOGNIZED");
-    const category = CATEGORY_BY_ENTITY_TYPE[raw.entityType] || raw.suppliedCategory || null;
-    const baseCode = normalizeCode(raw.suppliedCode || raw.officialEmail?.split("@")[0] || raw.name);
-    const code = makeUniqueCode(baseCode, raw.campus, usedCodes);
+    const category = raw.suppliedCategory || CATEGORY_BY_ENTITY_TYPE[raw.entityType] || null;
+    const suppliedWasValid = isValidSocietyCode(raw.suppliedCode);
+    const preparedCode = await prepareSocietyCode({
+      suppliedCode: raw.suppliedCode,
+      name: raw.name,
+      campus: raw.campus,
+      usedCodes,
+    });
+    const code = preparedCode.code;
     if (!code) errors.push("CODE_GENERATION_FAILED");
+    if (raw.suppliedCode && !suppliedWasValid) warnings.push("INVALID_CODE_REGENERATED");
     if (!raw.officialEmail) warnings.push("SOCIETY_EMAIL_MISSING");
     else if (!EMAIL_PATTERN.test(raw.officialEmail)) warnings.push("SOCIETY_EMAIL_INVALID");
     if (!raw.presidentPreview.name) warnings.push("PRESIDENT_NAME_MISSING");
@@ -147,15 +155,23 @@ const normalizeAndValidateRows = async (rawRows) => {
     if (![raw.name, code, raw.entityType, raw.campus, category, raw.academicSession].every(Boolean)) errors.push("REQUIRED_FIELD_MISSING");
 
     const nameCampusKey = `${normalizeName(raw.name)}|${raw.campus}`;
-    const uploadKey = raw.officialEmail ? `email:${raw.officialEmail}` : `name:${nameCampusKey}`;
+    const emailCampusKey = raw.officialEmail ? `${raw.officialEmail}|${raw.campus}` : null;
+    const normalizedSuppliedCode = suppliedWasValid ? raw.suppliedCode.trim().toUpperCase() : null;
     const existingMatch = existing.some((item) =>
-      (raw.officialEmail && item.email === raw.officialEmail) ||
+      (normalizedSuppliedCode && item.code === normalizedSuppliedCode) ||
       (normalizeName(item.name) === normalizeName(raw.name) && item.metadata?.campus === raw.campus)
+      || (raw.officialEmail && item.email === raw.officialEmail && item.metadata?.campus === raw.campus)
     );
     let action = "IMPORT";
     if (existingMatch) { warnings.push("SOCIETY_ALREADY_EXISTS"); action = "SKIP"; }
-    else if (uploadKeys.has(uploadKey)) { warnings.push("DUPLICATE_IN_UPLOAD"); action = "SKIP"; }
-    uploadKeys.add(uploadKey);
+    else if (
+      uploadNames.has(nameCampusKey) ||
+      (emailCampusKey && uploadEmails.has(emailCampusKey)) ||
+      (normalizedSuppliedCode && uploadSuppliedCodes.has(normalizedSuppliedCode))
+    ) { warnings.push("DUPLICATE_IN_UPLOAD"); action = "SKIP"; }
+    uploadNames.add(nameCampusKey);
+    if (emailCampusKey) uploadEmails.add(emailCampusKey);
+    if (normalizedSuppliedCode) uploadSuppliedCodes.add(normalizedSuppliedCode);
     if (code) usedCodes.add(code);
     const importable = errors.length === 0 && action !== "SKIP";
     rows.push({
@@ -201,7 +217,17 @@ const findActiveSession = async (id) => {
 
 const getImportSession = async (id) => {
   const session = await findActiveSession(id);
-  return { importSessionId: session.id, status: session.status, summary: summarize(session.normalizedRows), rows: session.normalizedRows };
+  const data = {
+    importSessionId: session.id,
+    status: session.status,
+    summary: summarize(session.normalizedRows),
+    rows: session.normalizedRows,
+  };
+  if (session.status === IMPORT_STATUSES.IMPORTED) {
+    data.importSummary = session.importSummary;
+    data.importResults = session.importResults;
+  }
+  return data;
 };
 
 const deriveShortName = (name) => {
@@ -210,58 +236,118 @@ const deriveShortName = (name) => {
 };
 
 const confirmImport = async (id) => {
-  const session = await findActiveSession(id);
-  if (session.status !== IMPORT_STATUSES.PREVIEWED) throw new AppError("Import session has already been used", 409, "IMPORT_SESSION_ALREADY_USED");
-  session.status = IMPORT_STATUSES.FAILED;
-  await session.save();
-  const eligible = session.normalizedRows.filter((row) => row.importable && row.action !== "SKIP" && row.errors.length === 0);
-  const codes = eligible.map((row) => row.code);
-  const emails = eligible.filter((row) => EMAIL_PATTERN.test(row.officialEmail || "")).map((row) => row.officialEmail);
-  const conflicts = await Society.find({ $or: [{ code: { $in: codes } }, { email: { $in: emails } }] }, { code: 1, email: 1 }).lean();
-  const conflictCodes = new Set(conflicts.map((item) => item.code));
-  const conflictEmails = new Set(conflicts.map((item) => item.email).filter(Boolean));
-  const importRows = eligible.filter((row) => !conflictCodes.has(row.code) && !conflictEmails.has(row.officialEmail));
-  const operations = importRows.map((row) => ({ insertOne: { document: {
-    name: row.name, code: row.code, shortName: deriveShortName(row.name), category: row.category,
-    ...(EMAIL_PATTERN.test(row.officialEmail || "") ? { email: row.officialEmail } : {}),
-    academicSession: row.academicSession, status: row.status, isActive: row.isActive,
-    metadata: { entityType: row.entityType, campus: row.campus, importSource: "SOCIETY_EXCEL", sourceRowNumber: row.rowNumber, presidentPreview: row.presidentPreview },
-  } } }));
+  let session = await Session.findOneAndUpdate(
+    { _id: id, expiresAt: { $gt: new Date() }, status: IMPORT_STATUSES.PREVIEWED },
+    { $set: { status: IMPORT_STATUSES.FAILED } },
+    { new: true }
+  );
+  if (!session) {
+    session = await findActiveSession(id);
+    throw new AppError("Import session has already been used", 409, "IMPORT_SESSION_ALREADY_USED");
+  }
 
-  const failures = [];
-  let importedCount = 0;
-  try {
-    if (operations.length) {
-      const hello = await mongoose.connection.db.admin().command({ hello: 1 });
-      if (hello.setName || hello.msg === "isdbgrid") {
-        await mongoose.connection.transaction(async (transaction) => {
-          const result = await Society.bulkWrite(operations, { ordered: false, session: transaction });
-          importedCount = result.insertedCount;
-        });
+  const results = [];
+  for (const row of session.normalizedRows) {
+    const result = {
+      rowNumber: row.rowNumber,
+      societyName: row.name,
+      societyCode: row.code,
+      societyId: null,
+      societyStatus: "SKIPPED",
+      leadershipStatus: "SKIPPED",
+      leadershipReason: "SOCIETY_NOT_CREATED",
+      errors: [...(row.errors || [])],
+    };
+
+    if (!row.importable || row.action === "SKIP" || row.errors.length > 0) {
+      if (row.action === "SKIP") result.errors.push("SOCIETY_ALREADY_EXISTS_OR_DUPLICATE");
+      results.push(result);
+      continue;
+    }
+
+    const preparedCode = await prepareSocietyCode({
+      suppliedCode: row.code,
+      name: row.name,
+      campus: row.campus,
+      isCodeTaken: async (code) => Boolean(await Society.exists({ code })),
+    });
+    row.code = preparedCode.code;
+    const conflict = await Society.findOne({
+      $or: [
+        { code: row.code },
+        ...(EMAIL_PATTERN.test(row.officialEmail || "") ? [{ email: row.officialEmail, "metadata.campus": row.campus }] : []),
+        { name: row.name, "metadata.campus": row.campus },
+      ],
+    }).lean();
+    if (conflict) {
+      result.errors.push("SOCIETY_ALREADY_EXISTS");
+      results.push(result);
+      continue;
+    }
+
+    try {
+      const society = await societyService.createSociety({
+        name: row.name,
+        code: row.code,
+        shortName: deriveShortName(row.name),
+        category: row.category,
+        ...(EMAIL_PATTERN.test(row.officialEmail || "") ? { email: row.officialEmail } : {}),
+        academicSession: row.academicSession,
+        status: row.status,
+        isActive: row.isActive,
+        metadata: {
+          entityType: row.entityType,
+          campus: row.campus,
+          importSource: "SOCIETY_EXCEL",
+          sourceRowNumber: row.rowNumber,
+        },
+      });
+      result.societyId = society.id;
+      result.societyStatus = "CREATED";
+      const leadership = await createLeadershipFromImportPreview({
+        societyId: society.id,
+        presidentPreview: row.presidentPreview,
+        academicSession: row.academicSession,
+      });
+      result.leadershipStatus = leadership.status;
+      result.leadershipReason = leadership.reason || null;
+      if (leadership.status === "FAILED" && leadership.error) result.errors.push(leadership.error);
+    } catch (error) {
+      if (error.code === "SOCIETY_CODE_EXISTS" || error.code === 11000) {
+        result.societyStatus = "SKIPPED";
+        result.errors.push("SOCIETY_ALREADY_EXISTS");
       } else {
-        try {
-          const result = await Society.bulkWrite(operations, { ordered: false });
-          importedCount = result.insertedCount;
-        } catch (error) {
-          importedCount = error.result?.insertedCount || 0;
-          for (const item of error.writeErrors || []) failures.push({ rowNumber: importRows[item.index]?.rowNumber, code: item.code, message: item.errmsg });
-        }
+        result.societyStatus = "FAILED";
+        result.errors.push(error.code || error.message || "SOCIETY_CREATION_FAILED");
       }
     }
-    session.status = IMPORT_STATUSES.IMPORTED;
-    session.importedAt = new Date();
-    await session.save();
-    const previewSkipped = session.normalizedRows.filter((row) => row.action === "SKIP").length;
-    return {
-      importSessionId: session.id,
-      importedCount,
-      skippedCount: previewSkipped + eligible.length - importRows.length,
-      failedCount: failures.length,
-      failures,
-    };
-  } catch (error) {
-    throw error;
+    results.push(result);
   }
+
+  const count = (field, status) => results.filter((result) => result[field] === status).length;
+  const summary = {
+    societiesCreated: count("societyStatus", "CREATED"),
+    societiesSkipped: count("societyStatus", "SKIPPED"),
+    societiesFailed: count("societyStatus", "FAILED"),
+    leadershipCreated: count("leadershipStatus", "CREATED"),
+    leadershipSkipped: count("leadershipStatus", "SKIPPED"),
+    leadershipDuplicates: count("leadershipStatus", "DUPLICATE"),
+    leadershipFailed: count("leadershipStatus", "FAILED"),
+  };
+  const importableRows = session.normalizedRows.filter((row) => row.importable && row.action !== "SKIP" && row.errors.length === 0).length;
+  if (importableRows > 0 && summary.societiesCreated === 0 && summary.societiesSkipped < importableRows) {
+    throw new AppError(
+      "No importable society rows could be processed",
+      500,
+      "IMPORT_CONFIRMATION_NO_ROWS_PROCESSED"
+    );
+  }
+  session.status = IMPORT_STATUSES.IMPORTED;
+  session.importedAt = new Date();
+  session.importSummary = summary;
+  session.importResults = results;
+  await session.save();
+  return { importSessionId: session.id, summary, results };
 };
 
 module.exports = { previewImport, getImportSession, confirmImport };

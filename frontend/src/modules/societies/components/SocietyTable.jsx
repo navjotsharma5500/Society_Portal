@@ -1,0 +1,6 @@
+import { Link } from 'react-router-dom'
+import { Eye, Pencil, Power } from 'lucide-react'
+import AppButton from '../../../components/common/AppButton'
+import StatusBadge from '../../../components/common/StatusBadge'
+import { displayValue } from '../../../utils/formatters'
+export default function SocietyTable({items,onEdit,onStatus}){return <div className="table-wrap"><table><thead><tr><th>Society</th><th>Code</th><th>Category</th><th>Email</th><th>Academic Session</th><th>Status</th><th>Actions</th></tr></thead><tbody>{items.map(s=><tr key={s._id}><td><strong>{s.name}</strong></td><td>{s.code}</td><td>{displayValue(s.category)}</td><td>{displayValue(s.email)}</td><td>{displayValue(s.academicSession)}</td><td><StatusBadge status={s.status}/></td><td><div className="card-actions"><Link className="button button-icon" aria-label={`View ${s.name}`} title="View" to={`/admin/societies/${s._id}`}><Eye size={16}/></Link><AppButton variant="icon" aria-label={`Edit ${s.name}`} title="Edit" onClick={()=>onEdit(s)}><Pencil size={16}/></AppButton><AppButton variant={s.isActive?'danger':'outlinePrimary'} aria-label={`${s.isActive?'Deactivate':'Activate'} ${s.name}`} title={s.isActive?'Deactivate':'Activate'} onClick={()=>onStatus(s)}><Power size={16}/></AppButton></div></td></tr>)}</tbody></table></div>}
