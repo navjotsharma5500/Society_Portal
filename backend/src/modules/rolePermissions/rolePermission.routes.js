@@ -1,0 +1,1 @@
+const express=require("express"),c=require("./rolePermission.controller"),v=require("./rolePermission.validation");const router=express.Router({mergeParams:true});router.route("/").get(c.get).put(v.validateReplace,c.replace);module.exports=router;

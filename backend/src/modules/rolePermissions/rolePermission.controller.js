@@ -1,0 +1,1 @@
+const service=require("./rolePermission.service");const get=async(req,res)=>res.json({success:true,data:{permissions:await service.getRolePermissions(req.params.roleId)}});const replace=async(req,res)=>res.json({success:true,data:await service.replaceRolePermissions(req.params.roleId,req.body.permissions,req.body.updatedBy)});module.exports={get,replace};

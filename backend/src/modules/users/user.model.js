@@ -1,0 +1,5 @@
+const mongoose=require("mongoose");const{ACCOUNT_TYPES,USER_STATUSES}=require("./user.constants");
+const schema=new mongoose.Schema({email:{type:String,required:true,unique:true,lowercase:true,trim:true,index:true},displayName:{type:String,required:true,trim:true,maxlength:150},accountType:{type:String,required:true,enum:Object.values(ACCOUNT_TYPES),index:true},status:{type:String,enum:Object.values(USER_STATUSES),default:USER_STATUSES.PENDING_ONBOARDING,index:true},googleSubject:{type:String,trim:true},profilePhotoUrl:{type:String,trim:true},studentMasterId:{type:mongoose.Schema.Types.ObjectId,ref:"StudentMaster"},isLoginAllowed:{type:Boolean,default:true},lastLoginAt:Date,onboardingCompletedAt:Date,metadata:{type:mongoose.Schema.Types.Mixed,default:()=>({})},createdBy:{type:mongoose.Schema.Types.ObjectId,ref:"User"},updatedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User"}},{timestamps:true});
+schema.index({googleSubject:1},{unique:true,sparse:true});schema.index({studentMasterId:1},{unique:true,sparse:true});
+schema.set("toJSON",{transform(doc,ret){delete ret.googleSubject;return ret;}});
+module.exports=mongoose.model("User",schema);
