@@ -1,6 +1,7 @@
 const environment = require("../../config/environment"),
   service = require("./auth.service"),
   sessions = require("./session.service"),
+  tokens = require("./token.service"),
   { AUTH_INTENTS, COOKIE_NAMES } = require("./auth.constants");
 const cookieBase = {
   httpOnly: true,
@@ -24,6 +25,25 @@ const clearCookies = (res) => {
   res.clearCookie(COOKIE_NAMES.REFRESH, {
     ...cookieBase,
     path: "/api/v1/auth",
+  });
+};
+const state = async (req, res) => {
+  const accessToken = req.cookies?.[COOKIE_NAMES.ACCESS];
+  let authenticated = false;
+  if (accessToken) {
+    try {
+      tokens.verifyAccessToken(accessToken);
+      authenticated = true;
+    } catch (_) {
+      authenticated = false;
+    }
+  }
+  res.json({
+    success: true,
+    data: {
+      authenticated,
+      refreshAvailable: Boolean(req.cookies?.[COOKIE_NAMES.REFRESH]),
+    },
   });
 };
 const google = (intent) => async (req, res) => {
@@ -117,6 +137,7 @@ module.exports = {
   signUp: google(AUTH_INTENTS.SIGN_UP),
   signIn: google(AUTH_INTENTS.SIGN_IN),
   staffSignIn,
+  state,
   refresh,
   logout,
   logoutAll,

@@ -6,6 +6,7 @@ import "../workspace.css";
 
 const definitions = {
   ADOSA: { base: "/adosa", title: "ADoSA", subtitle: "Administrative Workspace" },
+  DOSA: { base: "/dosa", title: "DoSA", subtitle: "Institutional Administration" },
   ADMIN: { base: "/admin-workspace", title: "DoSA", subtitle: "Institutional Administration" },
 };
 const links = [

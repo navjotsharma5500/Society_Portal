@@ -1,4 +1,4 @@
-const GLOBAL_ADMIN_ROLES = new Set(["SUPER_ADMIN", "DOSA"]);
+const GLOBAL_ADMIN_ROLES = new Set(["SUPER_ADMIN"]);
 const SOCIETY_ROLES = new Set([
   "PRESIDENT",
   "VICE_PRESIDENT",
@@ -14,6 +14,8 @@ export const routeForContext = (context) => {
     return "/admin-workspace/dashboard";
   if (context.type === "GLOBAL" && context.roleCode === "ADOSA")
     return "/adosa/dashboard";
+  if (context.type === "GLOBAL" && context.roleCode === "DOSA")
+    return "/dosa/dashboard";
   if (context.type === "GLOBAL" && GLOBAL_ADMIN_ROLES.has(context.roleCode))
     return "/admin";
   if (context.type === "SOCIETY" && SOCIETY_ROLES.has(context.roleCode))

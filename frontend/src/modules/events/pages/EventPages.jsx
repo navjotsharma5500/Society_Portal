@@ -433,8 +433,8 @@ export function EventDetailPage({ review = false }) {
         }`}
       >
         <h2>Schedule & flow</h2>
-        {event.dailySchedule?.map((row) => (
-          <p key={row.date}>
+        {event.dailySchedule?.map((row, index) => (
+          <p key={row._id || `${row.date}-${row.startTime}-${row.endTime}-${index}`}>
             {date(row.date)} · {row.startTime}–{row.endTime}
           </p>
         ))}

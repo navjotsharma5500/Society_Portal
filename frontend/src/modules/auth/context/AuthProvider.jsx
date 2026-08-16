@@ -148,6 +148,7 @@ export function AuthProvider({ children }) {
         await authApi.logoutSession();
       } finally {
         setAccessDisabled(false);
+        setAuthLoading(false);
         clearAuth();
       }
     }, [clearAuth]);
@@ -163,7 +164,13 @@ export function AuthProvider({ children }) {
     };
     window.addEventListener("auth:session-expired", expired);
     window.addEventListener("auth:access-disabled", disabled);
-    loadCurrentUser()
+    authApi.getAuthState()
+      .then((session) => {
+        if (!active) return null;
+        if (session?.authenticated || session?.refreshAvailable) return loadCurrentUser();
+        clearAuth();
+        return null;
+      })
       .catch(() => clearAuth())
       .finally(() => active && setAuthLoading(false));
     return () => {

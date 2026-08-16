@@ -2,6 +2,7 @@ const service = require("./role.service"), rp = require("../rolePermissions/role
 const emit=role=>events.publish("ROLE_METADATA_UPDATED",{metadata:{roleId:String(role._id)}});
 const create = async (req, res) => { const r = await service.createRole({ ...req.body, createdBy: req.auth.userId }); res.status(201).json({ success: true, data: { role: r.entity, audit: r.audit } }); };
 const list = async (req, res) => res.json({ success: true, data: await service.listRoles(req.roleFilters) });
+const reference = async (req, res) => res.json({ success: true, data: { items: await service.referenceRoles() } });
 const adminOverview = async (req, res) => res.json({ success: true, data: await service.adminOverview(req.roleFilters) });
 const get = async (req, res) => res.json({ success: true, data: { role: await service.getRole(req.params.roleId) } });
 const update = async (req, res) => { const r = await service.updateRole(req.params.roleId, { ...req.body, updatedBy: req.auth.userId }); emit(r.entity); res.json({ success: true, data: { role: r.entity, audit: r.audit } }); };
@@ -9,4 +10,4 @@ const status = async (req, res) => { const r = await service.updateStatus(req.pa
 const permissions = async (req, res) => res.json({ success: true, data: { permissions: await rp.getRolePermissions(req.params.roleId) } });
 const replace = async (req, res) => res.json({ success: true, data: await rp.replaceRolePermissions(req.params.roleId, req.body.permissions, req.auth.userId, { allowDeprecated: req.body.allowDeprecated === true }) });
 const runSeed = async (req, res) => res.json({ success: true, data: await seed.seedRolePermissionEngine() });
-module.exports = { create, list, adminOverview, get, update, status, permissions, replace, runSeed };
+module.exports = { create, list, reference, adminOverview, get, update, status, permissions, replace, runSeed };

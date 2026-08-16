@@ -205,6 +205,18 @@ export const router = createBrowserRouter([
     ],
   },
   {
+    path: "/dosa",
+    element: staffProtected(<AdministrativeWorkspaceLayout roleCode="DOSA" />),
+    children: [
+      { index: true, element: <Navigate to="dashboard" replace /> },
+      { path: "dashboard", element: <WorkspaceDashboardPage title="DoSA" /> },
+      { path: "events", element: <EventBrowserPage basePath="/dosa/events" title="DoSA Events" /> },
+      { path: "events/:eventId", element: <AdministrativeEventDetailsPage /> },
+      { path: "notifications", element: <WorkspaceUnavailablePage title="Notifications" description="The shared notification delivery API is not available yet; no separate notification store was created." /> },
+      { path: "profile", element: <ProfilePage /> },
+    ],
+  },
+  {
     path: "/admin-workspace",
     element: staffProtected(<AdministrativeWorkspaceLayout roleCode="ADMIN" />),
     children: [

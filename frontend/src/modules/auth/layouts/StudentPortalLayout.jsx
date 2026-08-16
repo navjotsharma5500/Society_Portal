@@ -18,9 +18,8 @@ const hasPermission = (context, code) => (context?.permissions || []).some((item
 const titles = { dashboard: "Home", societies: "My Societies", requests: "Requests & Status", notifications: "Notifications", profile: "Profile", events: "Events", approvals: "Approvals" };
 
 export default function StudentPortalLayout() {
-  const auth = useAuth(), loadCurrentUser = auth.loadCurrentUser, navigate = useNavigate(), location = useLocation(), contexts = useMemo(() => auth.activeSocietyContexts || [], [auth.activeSocietyContexts]), [selectedSocietyId, setSelectedSocietyId] = useState(""), [drawerOpen, setDrawerOpen] = useState(false), [actionsOpen, setActionsOpen] = useState(false);
+  const auth = useAuth(), navigate = useNavigate(), location = useLocation(), contexts = useMemo(() => auth.activeSocietyContexts || [], [auth.activeSocietyContexts]), [selectedSocietyId, setSelectedSocietyId] = useState(""), [drawerOpen, setDrawerOpen] = useState(false), [actionsOpen, setActionsOpen] = useState(false);
   useEffect(() => { if (!contexts.some((item) => String(item.societyId) === selectedSocietyId)) setSelectedSocietyId(String(contexts[0]?.societyId || "")); }, [contexts, selectedSocietyId]);
-  useEffect(() => { const focus = () => loadCurrentUser(); window.addEventListener("focus", focus); return () => window.removeEventListener("focus", focus); }, [loadCurrentUser]);
   useEffect(() => { setDrawerOpen(false); setActionsOpen(false); }, [location.pathname]);
   useEffect(() => { const close = (event) => event.key === "Escape" && (setDrawerOpen(false), setActionsOpen(false)); document.addEventListener("keydown", close); return () => document.removeEventListener("keydown", close); }, []);
   const selected = useMemo(() => contexts.find((item) => String(item.societyId) === selectedSocietyId) || contexts[0] || null, [contexts, selectedSocietyId]), canApprove = hasPermission(selected, "membership.request.approve") || hasPermission(selected, "onboarding.claim.approve"), canViewEvents = hasPermission(selected, "event.view") || hasPermission(selected, "event.list_society"), canCreateEvent = hasPermission(selected, "event.create"), contextItems = [

@@ -5,6 +5,7 @@ const { requirePermission } = require("../authorization/authorization.middleware
 router.use(authenticateSession);
 const protectSeed = (req, res, next) => { if (environment.nodeEnv === "production" && process.env.ALLOW_RBAC_SEED !== "true") return next(new AppError("RBAC seeding is disabled", 403, "PERMISSION_DENIED")); next(); };
 router.post("/seed", requirePermission("role.permissions.manage"), protectSeed, c.runSeed);
+router.get("/reference", c.reference);
 router.get("/admin-overview", requirePermission("role.view"), v.validateList, c.adminOverview);
 router.route("/").post(requirePermission("role.create"), v.validateCreate, c.create).get(requirePermission("role.view"), v.validateList, c.list);
 router.route("/:roleId/permissions").get(requirePermission("role.view"), c.permissions).put(requirePermission("role.permissions.manage"), rv.validateReplace, c.replace);

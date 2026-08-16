@@ -7,6 +7,7 @@ export const updateUser=(id,payload)=>apiClient.patch(`/users/${id}`,payload).th
 export const changeUserStatus=(id,status,reason='Updated by administrator')=>apiClient.patch(`/users/${id}/status`,{status,reason}).then(r=>data(r).user)
 export const changeLoginAccess=(id,isLoginAllowed,reason='Updated by administrator')=>apiClient.patch(`/users/${id}/login-access`,{isLoginAllowed,reason}).then(r=>data(r).user)
 export const listRoles=(params={})=>apiClient.get('/roles',{params}).then(data)
+export const listRoleReferences=()=>apiClient.get('/roles/reference').then(data)
 export const listActiveDepartments=()=>apiClient.get('/departments/lookup').then(r=>data(r).items)
 export const listRoleOverview=(params={})=>apiClient.get('/roles/admin-overview',{params}).then(data)
 export const getRole=id=>apiClient.get(`/roles/${id}`).then(r=>data(r).role)

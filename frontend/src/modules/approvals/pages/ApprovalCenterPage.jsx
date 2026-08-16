@@ -25,7 +25,7 @@ import {
   listJoinApprovals,
 } from "../services/approvalApi";
 import DecisionDialog from "../components/DecisionDialog";
-import { listRoles } from "../../rbac/services/rbacApi";
+import { listRoleReferences } from "../../rbac/services/rbacApi";
 import { decideEventReview, listAssignedEventReviews } from "../../events/services/eventApi";
 import "../approvals.css";
 const tabs = [
@@ -129,9 +129,9 @@ export default function ApprovalCenterPage() {
     load();
   }, [load]);
   useEffect(() => {
-    listRoles({ status: "ACTIVE", limit: 100 })
+    listRoleReferences()
       .then((x) => setRoleOptions(x.items))
-      .catch(() => {});
+      .catch((e) => setError(e.readableMessage));
   }, []);
   const shown = useMemo(
     () =>

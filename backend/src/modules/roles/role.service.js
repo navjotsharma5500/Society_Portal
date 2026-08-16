@@ -53,6 +53,10 @@ const listRoles = async (f) => {
     },
   };
 };
+const referenceRoles = async () => Role.find({ status: "ACTIVE" })
+  .select("_id name code category scopeType")
+  .sort({ rank: -1, name: 1 })
+  .lean();
 const adminOverview = async (filters) => {
   const result = await listRoles(filters), roleIds = result.items.map((role) => role._id);
   const [permissionCounts, assignmentCounts] = await Promise.all([
@@ -96,4 +100,4 @@ const updateStatus = async (id, status, actorId) => {
     actorId
   );
 };
-module.exports = { createRole, listRoles, adminOverview, getRole, updateRole, updateStatus };
+module.exports = { createRole, listRoles, referenceRoles, adminOverview, getRole, updateRole, updateStatus };
