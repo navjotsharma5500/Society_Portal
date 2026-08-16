@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Plus, RefreshCw, Upload } from "lucide-react";
 import AppButton from "../../../components/common/AppButton";
 import EmptyState from "../../../components/common/EmptyState";
@@ -12,6 +12,8 @@ import {
 } from "../../../services/societyApi";
 import AddSocietyModal from "../components/AddSocietyModal";
 import ImportSocietiesModal from "../components/ImportSocietiesModal";
+import LeadershipImportModal from "../components/LeadershipImportModal";
+import { downloadLeadershipTemplate } from "../../../services/societyLeadershipApi";
 import SocietyCard from "../components/SocietyCard";
 import SocietyFilters from "../components/SocietyFilters";
 import SocietySummaryCards from "../components/SocietySummaryCards";
@@ -30,45 +32,60 @@ const initial = {
 };
 export default function SocietyManagementPage() {
   const [filters, setFilters] = useState(initial);
+  const [searchInput, setSearchInput] = useState("");
   const [data, setData] = useState({
     items: [],
     pagination: { page: 1, limit: 20, totalItems: 0, totalPages: 0 },
   });
   const [counts, setCounts] = useState({ active: 0, inactive: 0 });
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [leadershipImportOpen, setLeadershipImportOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const { notify } = useToast();
-  const load = useCallback(async () => {
-    setLoading(true);
+  const requestSequence = useRef(0);
+  const hasLoaded = useRef(false);
+  const load = useCallback(async ({ initialLoad = false } = {}) => {
+    const requestId = ++requestSequence.current;
+    if (initialLoad) setLoading(true);
+    else setRefreshing(true);
     setError("");
     try {
       const params = Object.fromEntries(
         Object.entries(filters).filter(([, v]) => v !== ""),
       );
-      const [result, active, inactive] = await Promise.all([
-        listSocieties(params),
-        listSocieties({ isActive: true, limit: 1 }),
-        listSocieties({ isActive: false, limit: 1 }),
-      ]);
-      setData(result);
-      setCounts({
-        active: active.pagination.totalItems,
-        inactive: inactive.pagination.totalItems,
-      });
+      const result = await listSocieties(params);
+      if (requestId === requestSequence.current) setData(result);
     } catch (e) {
-      setError(e.readableMessage);
+      if (requestId === requestSequence.current) setError(e.readableMessage);
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [filters]);
+  const loadCounts = useCallback(async () => {
+    const [active, inactive] = await Promise.all([
+      listSocieties({ isActive: true, limit: 1 }),
+      listSocieties({ isActive: false, limit: 1 }),
+    ]);
+    setCounts({ active: active.pagination.totalItems, inactive: inactive.pagination.totalItems });
+  }, []);
   useEffect(() => {
-    const timer = setTimeout(load, 250);
-    return () => clearTimeout(timer);
+    load({ initialLoad: !hasLoaded.current }).finally(() => { hasLoaded.current = true; });
   }, [load]);
-  useEffect(() => subscribeToSocietyUpdates(load), [load]);
+  useEffect(() => { loadCounts().catch(() => {}); }, [loadCounts]);
+  const refreshRef = useRef(null);
+  refreshRef.current = () => Promise.all([load(), loadCounts()]);
+  useEffect(() => subscribeToSocietyUpdates(() => refreshRef.current?.()), []);
+  useEffect(() => {
+    const timer = setTimeout(() => setFilters((current) => current.search === searchInput ? current : { ...current, search: searchInput, page: 1 }), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
   const status = async (s) => {
     try {
       await updateSocietyStatus(s._id, s.isActive ? "INACTIVE" : "ACTIVE");
@@ -86,6 +103,7 @@ export default function SocietyManagementPage() {
       notify(e.readableMessage, "error");
     }
   };
+  const downloadLeadership = async () => { try { const blob=await downloadLeadershipTemplate(),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="TIET-Society-Leadership-Import-Template.xlsx";a.click();URL.revokeObjectURL(url);notify("Leadership template downloaded","success"); } catch(e) { notify(e.readableMessage,"error"); } };
   return (
     <div className="page-stack">
       <PageHeader
@@ -112,12 +130,15 @@ export default function SocietyManagementPage() {
           <Download size={18} />
           Download Template
         </AppButton>
-        <AppButton variant="ghost" onClick={load}>
+        <AppButton variant="outlinePrimary" onClick={() => setLeadershipImportOpen(true)}><Upload size={18}/>Import Leadership (All Societies)</AppButton>
+        <AppButton variant="ghost" onClick={downloadLeadership}><Download size={18}/>All-Societies Leadership Template</AppButton>
+        <AppButton variant="ghost" onClick={() => refreshRef.current?.()}>
           <RefreshCw size={18} />
           Refresh
         </AppButton>
       </div>
-      <SocietyFilters filters={filters} onChange={setFilters} />
+      <SocietyFilters filters={filters} searchValue={searchInput} onSearchChange={setSearchInput} onChange={setFilters} />
+      {refreshing && <p className="muted society-list-loading" role="status">Updating societies…</p>}
       {loading ? (
         <LoadingState />
       ) : error ? (
@@ -195,6 +216,7 @@ export default function SocietyManagementPage() {
         onClose={() => setImportOpen(false)}
         onImportCompleted={notifySocietiesUpdated}
       />
+      <LeadershipImportModal open={leadershipImportOpen} onClose={()=>setLeadershipImportOpen(false)} onCompleted={load}/>
     </div>
   );
 }

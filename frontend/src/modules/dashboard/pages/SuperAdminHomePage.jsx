@@ -5,8 +5,11 @@ import {
   CircleCheck,
   CircleOff,
   Download,
+  GraduationCap,
   Upload,
   UsersRound,
+  UserCog,
+  ShieldCheck,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import AppButton from "../../../components/common/AppButton";
@@ -15,8 +18,7 @@ import SocietyCard from "../../societies/components/SocietyCard";
 import ImportSocietiesModal from "../../societies/components/ImportSocietiesModal";
 import LoadingState from "../../../components/common/LoadingState";
 import EmptyState from "../../../components/common/EmptyState";
-import { listSocieties } from "../../../services/societyApi";
-import { listLeadership } from "../../../services/societyLeadershipApi";
+import { getSuperAdminSummary } from "../services/dashboardApi";
 import { downloadTemplate } from "../../../services/societyImportApi";
 import { useToast } from "../../../components/common/toastContext";
 import {
@@ -34,19 +36,13 @@ export default function SuperAdminHomePage() {
     setLoading(true);
     setError("");
     try {
-      const [all, active, inactive, leadership, recent] = await Promise.all([
-        listSocieties({ limit: 1 }),
-        listSocieties({ isActive: true, limit: 1 }),
-        listSocieties({ isActive: false, limit: 1 }),
-        listLeadership({ limit: 1 }),
-        listSocieties({ limit: 5 }),
-      ]);
+      const summary = await getSuperAdminSummary();
       setData({
-        total: all.pagination.totalItems,
-        active: active.pagination.totalItems,
-        inactive: inactive.pagination.totalItems,
-        leadership: leadership.pagination.totalItems,
-        recent: recent.items,
+        total: summary.societyCount,
+        active: summary.activeSocietyCount,
+        inactive: summary.inactiveSocietyCount,
+        leadership: summary.leadershipCount,
+        recent: summary.recentSocieties,
       });
     } catch (e) {
       setError(e.readableMessage);
@@ -127,6 +123,18 @@ export default function SuperAdminHomePage() {
           <h3>Quick actions</h3>
         </div>
         <div className="quick-grid">
+          <button className="button button-ghost quick-action" onClick={() => navigate("/admin/users")}>
+            <UserCog />
+            Manage Users
+          </button>
+          <button className="button button-ghost quick-action" onClick={() => navigate("/admin/roles")}>
+            <ShieldCheck />
+            Roles &amp; Permissions
+          </button>
+          <button className="button button-ghost quick-action" onClick={() => navigate("/admin/students")}>
+            <GraduationCap />
+            Manage Students
+          </button>
           <button
             className="button button-ghost quick-action"
             onClick={() => navigate("/admin/societies")}

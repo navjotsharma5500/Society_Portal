@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const AppError = require("../../common/errors/AppError");
 const Role = require("../roles/role.model");
+const UserRoleAssignment = require("../userRoleAssignments/userRoleAssignment.model");
 const Permission = require("../permissions/permission.model");
 const Mapping = require("./rolePermission.model");
 const repo = require("./rolePermission.repository");
@@ -44,7 +45,7 @@ const replaceRolePermissions = async (
     );
   if (
     role.code === "SUPER_ADMIN" &&
-    found.length < (await Permission.countDocuments({ status: "ACTIVE" }))
+    (found.length < (await Permission.countDocuments({ status: "ACTIVE" })) || permissions.some(item=>item.effect&&item.effect!=="ALLOW"))
   )
     throw new AppError(
       "SUPER_ADMIN full access cannot be removed",
@@ -53,26 +54,29 @@ const replaceRolePermissions = async (
     );
   const before = await Mapping.find({ roleId }).lean();
   const wanted = new Set(ids.map(String));
-  await Mapping.updateMany(
-    { roleId, permissionId: { $nin: ids } },
-    { $set: { isActive: false, updatedBy: actorId } }
-  );
-  for (const item of permissions)
-    await Mapping.findOneAndUpdate(
-      { roleId, permissionId: item.permissionId },
-      {
-        $set: {
-          effect: item.effect || "ALLOW",
-          dataScope: item.dataScope || "NONE",
-          conditions: item.conditions || {},
-          isActive: true,
-          updatedBy: actorId,
-        },
-        $setOnInsert: { createdBy: actorId },
-      },
-      { upsert: true, returnDocument: "after", runValidators: true }
-    );
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      await Mapping.updateMany(
+        { roleId, permissionId: { $nin: ids } },
+        { $set: { isActive: false, updatedBy: actorId } },
+        { session }
+      );
+      if (permissions.length) await Mapping.bulkWrite(
+        permissions.map((item) => ({ updateOne: {
+          filter: { roleId, permissionId: item.permissionId },
+          update: { $set: { effect: item.effect || "ALLOW", dataScope: item.dataScope || "NONE", conditions: item.conditions || {}, isActive: true, updatedBy: actorId }, $setOnInsert: { createdBy: actorId } },
+          upsert: true,
+        } })),
+        { session, ordered: true }
+      );
+    });
+  } finally {
+    await session.endSession();
+  }
   const mappings = await repo.findByRole(roleId);
+  const societyIds = await UserRoleAssignment.find({ roleId, scopeType: "SOCIETY", status: "ACTIVE", isOngoing: true }).distinct("societyId");
+  if (societyIds.length) await require("../verificationRouting/verificationRouting.service").reconcilePendingClaims({ societyIds });
   return {
     mappings,
     audit: {
@@ -80,7 +84,7 @@ const replaceRolePermissions = async (
       entityId: roleId,
       operation: "BULK_REPLACE",
       before,
-      after: mappings.map((x) => x.toObject()),
+      after: mappings.map((x) => x.toObject ? x.toObject() : x),
       actorId: actorId || null,
       metadata: { activeCount: wanted.size },
     },

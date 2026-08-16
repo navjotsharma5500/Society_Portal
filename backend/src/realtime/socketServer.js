@@ -1,0 +1,5 @@
+const {Server}=require("socket.io"),environment=require("../config/environment"),auth=require("./socketAuth"),rooms=require("./socketRooms"),publisher=require("./realtimePublisher"),bridge=require("./domainEventBridge");
+let io;
+const initializeRealtime=(httpServer)=>{if(io)return io;io=new Server(httpServer,{cors:{origin:environment.frontendUrl,credentials:true},transports:["websocket","polling"],pingInterval:25000,pingTimeout:20000});io.use(auth);io.on("connection",async(socket)=>{try{await rooms.reconcileSocketRooms(socket);if(environment.nodeEnv==="development")console.info("[realtime] connected");socket.on("disconnect",()=>{if(environment.nodeEnv==="development")console.info("[realtime] disconnected");});}catch(_){socket.disconnect(true);}});publisher.setSocketServer(io);bridge.start();return io;};
+const closeRealtime=async()=>{if(io)await new Promise((resolve)=>io.close(resolve));io=null;publisher.setSocketServer(null);};
+module.exports={initializeRealtime,closeRealtime,getSocketServer:()=>io};

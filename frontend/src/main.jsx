@@ -5,9 +5,12 @@ import './styles/globals.css'
 import './styles/components.css'
 import './styles/layout.css'
 import App from './app/App.jsx'
+import GoogleAuthProviderBoundary from './modules/auth/components/GoogleAuthProviderBoundary.jsx'
 
 createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <GoogleAuthProviderBoundary>
+    <StrictMode>
+      <App />
+    </StrictMode>
+  </GoogleAuthProviderBoundary>,
 )

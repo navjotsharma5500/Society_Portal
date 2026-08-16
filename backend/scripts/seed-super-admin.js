@@ -1,0 +1,2 @@
+const {connectDatabase,disconnectDatabase}=require('../src/config/database'),{bootstrapSuperAdmins}=require('../src/modules/authorization/superAdminBootstrap.service');
+(async()=>{try{await connectDatabase();const result=await bootstrapSuperAdmins();console.log('SUPER_ADMIN bootstrap complete',JSON.stringify(result,null,2))}finally{await disconnectDatabase()}})().catch(error=>{console.error(`${error.code||'SUPER_ADMIN_BOOTSTRAP_FAILED'}: ${error.message}`);process.exit(1)});

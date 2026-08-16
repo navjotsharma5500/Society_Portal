@@ -1,1 +1,13 @@
-const express=require("express"),c=require("./role.controller"),v=require("./role.validation"),rv=require("../rolePermissions/rolePermission.validation"),environment=require("../../config/environment"),AppError=require("../../common/errors/AppError");const router=express.Router();const protectSeed=(req,res,next)=>{if(environment.nodeEnv==="production"&&process.env.ALLOW_RBAC_SEED!=="true")return next(new AppError("RBAC seeding is disabled",403,"PERMISSION_DENIED"));next()};router.post("/seed",protectSeed,c.runSeed);router.route("/").post(v.validateCreate,c.create).get(v.validateList,c.list);router.route("/:roleId/permissions").get(c.permissions).put(rv.validateReplace,c.replace);router.patch("/:roleId/status",v.validateStatus,c.status);router.route("/:roleId").get(c.get).patch(v.validateUpdate,c.update);module.exports=router;
+const express = require("express"), c = require("./role.controller"), v = require("./role.validation"), rv = require("../rolePermissions/rolePermission.validation"), environment = require("../../config/environment"), AppError = require("../../common/errors/AppError");
+const router = express.Router();
+const { authenticateSession } = require("../auth/auth.middleware");
+const { requirePermission } = require("../authorization/authorization.middleware");
+router.use(authenticateSession);
+const protectSeed = (req, res, next) => { if (environment.nodeEnv === "production" && process.env.ALLOW_RBAC_SEED !== "true") return next(new AppError("RBAC seeding is disabled", 403, "PERMISSION_DENIED")); next(); };
+router.post("/seed", requirePermission("role.permissions.manage"), protectSeed, c.runSeed);
+router.get("/admin-overview", requirePermission("role.view"), v.validateList, c.adminOverview);
+router.route("/").post(requirePermission("role.create"), v.validateCreate, c.create).get(requirePermission("role.view"), v.validateList, c.list);
+router.route("/:roleId/permissions").get(requirePermission("role.view"), c.permissions).put(requirePermission("role.permissions.manage"), rv.validateReplace, c.replace);
+router.patch("/:roleId/status", requirePermission("role.status.change"), v.validateStatus, c.status);
+router.route("/:roleId").get(requirePermission("role.view"), c.get).patch(requirePermission("role.edit"), v.validateUpdate, c.update);
+module.exports = router;

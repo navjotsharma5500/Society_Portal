@@ -1,6 +1,6 @@
 {
   "name": "society-portal-backend",
-  "version": "0.5.0",
+  "version": "0.11.1",
   "description": "Backend API for the TIET Society Portal",
   "main": "src/server.js",
   "private": true,
@@ -8,7 +8,38 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed:rbac": "node scripts/seed-rbac.js",
-    "verify:rbac": "node scripts/verify-rbac.js"
+    "seed:super-admin": "node scripts/seed-super-admin.js",
+    "verify:super-admin": "node scripts/verify-super-admin.js",
+    "verify:rbac": "node scripts/verify-rbac.js",
+    "verify:auth": "node scripts/verify-auth.js",
+    "verify:staff-auth": "node scripts/verify-staff-auth.js",
+    "verify:approvals": "node scripts/verify-approval-center.js",
+    "verify:onboarding": "node scripts/verify-onboarding.js",
+    "verify:verification-routing": "node scripts/verify-verification-routing.js",
+    "verify:memberships": "node scripts/verify-memberships.js",
+    "verify:undertakings": "node scripts/verify-undertakings.js",
+    "verify:events": "node scripts/verify-events.js",
+    "verify:event-workflow": "node scripts/verify-event-workflow.js",
+    "verify:settings-budgets": "node scripts/verify-settings-budgets.js",
+    "migrate:public-ids": "node scripts/migrate-public-ids.js",
+    "verify:master-imports-public-ids": "node scripts/verify-master-imports-public-ids.js",
+    "verify:academic-session-lifecycle": "node scripts/verify-academic-session-lifecycle.js",
+    "migrate:academic-session-lifecycle": "node scripts/migrate-academic-session-lifecycle.js",
+    "migrate:society-leadership": "node scripts/migrate-society-leadership.js",
+    "verify:administrative-workspaces": "node scripts/verify-administrative-workspaces.js",
+    "verify:phase1-profile-dependencies": "node scripts/verify-phase1-profile-dependencies.js",
+    "verify:phase2-rbac": "node scripts/verify-phase2-rbac.js",
+    "verify:phase3a-business-rules": "node scripts/verify-phase3a-business-rules.js",
+    "audit:identity-conflicts": "node scripts/audit-identity-conflicts.js",
+    "verify:phase3b-identity": "node scripts/verify-phase3b-identity.js",
+    "migrate:student-public-ids": "node scripts/backfill-student-public-ids.js",
+    "verify:update-existing-records": "node scripts/verify-update-existing-records.js",
+    "verify:phase3c-rollover": "node scripts/verify-phase3c-rollover.js",
+    "verify:realtime": "node scripts/verify-realtime.js",
+    "repair:claim-routing": "node scripts/reconcile-claim-routing.js",
+    "reconcile:legacy-leadership": "node scripts/reconcile-legacy-leadership.js",
+    "diagnose:claim-routing": "node scripts/diagnose-claim-routing.js",
+    "verify:redis-cache": "node scripts/verify-redis-cache.js"
   },
   "keywords": [],
   "author": "",
@@ -21,12 +52,17 @@
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
+    "google-auth-library": "^11.0.0",
     "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.1",
     "morgan": "^1.11.0",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "redis": "^5.12.1",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.3"
   }
 }

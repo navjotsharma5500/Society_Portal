@@ -1,0 +1,8 @@
+import {useNavigate} from 'react-router-dom'
+import {Button,EmptyState,PageHeader,Skeleton} from '../../../design-system'
+import {resubmitClaim} from '../../onboarding/services/onboardingApi'
+import {useToast} from '../../../components/common/toastContext'
+import JoinRequestStatusCard from '../components/JoinRequestStatusCard'
+import {ClaimCard} from './StudentVerificationPage'
+import {useStudentPortalData} from '../hooks/useStudentPortalData'
+export default function StudentRequestsPage(){const navigate=useNavigate(),{notify}=useToast(),data=useStudentPortalData();if(data.loading)return <Skeleton lines={10}/>;if(data.error)return <EmptyState title="Requests unavailable" description={data.error} action={<Button onClick={data.refresh}>Retry</Button>}/>;const reEvaluate=async claim=>{try{await resubmitClaim(claim._id);notify('Claim submitted for re-evaluation.','success');data.refresh()}catch(e){notify(e.readableMessage,'error')}};return <><PageHeader eyebrow="Student Portal" title="Requests & Status" description="Track verification and new society requests." actions={<Button variant="outline" onClick={data.refresh}>Refresh Status</Button>}/><section className="portal-section student-request-list"><h2>Existing Society Verification</h2>{data.claims.length?data.claims.map(claim=><ClaimCard key={claim._id} claim={claim} navigate={navigate} onResubmit={()=>reEvaluate(claim)}/>):<EmptyState title="No existing society claims"/>}</section><section className="portal-section student-request-list"><h2>New Society Join Requests</h2>{data.requests.length?data.requests.map(request=><JoinRequestStatusCard key={request._id} request={request} navigate={navigate}/>):<EmptyState title="No join requests"/>}</section></>}

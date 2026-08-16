@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const AppError = require("../../common/errors/AppError");
 const Society = require("../societies/society.model");
+const academicSessions = require("../academicSessions/academicSession.service");
 const repository = require("./societyBudget.repository");
 const { BUDGET_STATUSES, TRANSACTION_TYPES, DIRECTIONS, ADJUSTMENT_TYPES } = require("./societyBudget.constants");
 
@@ -9,6 +10,11 @@ const assertBudgetId = (id) => { if (!isObjectId(id)) throw new AppError("Invali
 const assertSocietyId = (id) => { if (!isObjectId(id)) throw new AppError("Invalid society ID", 400, "INVALID_SOCIETY_ID"); };
 const notFound = () => new AppError("Budget not found", 404, "BUDGET_NOT_FOUND");
 const insufficient = () => new AppError("Insufficient available budget", 409, "INSUFFICIENT_AVAILABLE_BUDGET");
+const requireCurrentSession = async () => {
+  const session = await academicSessions.getCurrentAcademicSession();
+  if (!session) throw new AppError("Please create and activate an Academic Session first.", 409, "CURRENT_ACADEMIC_SESSION_REQUIRED");
+  return session;
+};
 const assertOperation = ({ amount, reason, referenceId }) => {
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) throw new AppError("Budget amount must be greater than zero", 400, "INVALID_BUDGET_AMOUNT");
   if (typeof reason !== "string" || !reason.trim() || reason.trim().length > 1000) throw new AppError("A reason of at most 1000 characters is required", 400, "VALIDATION_ERROR");
@@ -41,16 +47,20 @@ const transactionData = (before, after, details) => ({
 });
 
 const createAnnualBudget = async (data) => {
+  await requireCurrentSession();
   assertSocietyId(data.societyId);
   const society = await Society.findById(data.societyId);
   if (!society) throw new AppError("Society not found", 404, "SOCIETY_NOT_FOUND");
   if (!society.isActive || society.status !== "ACTIVE") throw new AppError("An active budget cannot be created for an inactive society", 409, "SOCIETY_INACTIVE");
+  const academicSession = await academicSessions.resolveSession(data.academicSessionId || data.academicSession, { required: true });
+  if (!academicSession) throw new AppError("Academic session not found", 404, "ACADEMIC_SESSION_NOT_FOUND");
+  data = { ...data, academicSessionId: academicSession._id, academicSession: academicSession.name };
   if (await repository.findBySocietySession(data.societyId, data.academicSession)) throw new AppError("Budget already exists for this society and academic session", 409, "BUDGET_ALREADY_EXISTS");
 
   try {
     return await runAtomic(async (session) => {
       const budget = await repository.createBudget({ ...data, reservedAmount: 0, utilizedAmount: 0, availableAmount: data.allocatedAmount }, session);
-      await repository.createTransaction({
+      if (data.allocatedAmount > 0) await repository.createTransaction({
         budgetId: budget._id, societyId: budget.societyId, academicSession: budget.academicSession,
         transactionType: TRANSACTION_TYPES.INITIAL_ALLOCATION, amount: data.allocatedAmount,
         direction: DIRECTIONS.CREDIT, balanceBefore: 0, balanceAfter: budget.availableAmount,
@@ -104,6 +114,7 @@ const manualAdjustment = async (budgetId, data) => {
   return mutateBudget(budgetId, { transactionType: TRANSACTION_TYPES.MANUAL_ADJUSTMENT, amount: data.amount, direction: data.direction, reason: data.reason, createdBy: data.createdBy },
     (budget) => ({ allocatedAmount: budget.allocatedAmount + (credit ? data.amount : -data.amount), reservedAmount: budget.reservedAmount, utilizedAmount: budget.utilizedAmount }));
 };
+const setAllocation = async (budgetId, data) => { const budget = await getBudget(budgetId), difference = data.allocatedAmount - budget.allocatedAmount; if (!difference) return budget; return adjustBudget(budgetId, { adjustmentType: difference > 0 ? ADJUSTMENT_TYPES.INCREASE : ADJUSTMENT_TYPES.DECREASE, amount: Math.abs(difference), reason: data.reason, createdBy: data.createdBy }); };
 
 const closeBudget = async (budgetId, data) => mutateBudget(budgetId, (budget) => ({
   transactionType: TRANSACTION_TYPES.CLOSE, amount: Math.max(budget.availableAmount, budget.allocatedAmount, Number.MIN_VALUE), direction: DIRECTIONS.DEBIT, reason: data.reason, createdBy: data.createdBy,
@@ -132,4 +143,4 @@ const getCurrentBudget = async (societyId, academicSession) => { assertSocietyId
 const listTransactions = async (budgetId, filters) => { await getBudget(budgetId); const query = { budgetId }; if (filters.transactionType) query.transactionType = filters.transactionType; if (filters.dateFrom || filters.dateTo) { query.createdAt = {}; if (filters.dateFrom) query.createdAt.$gte = filters.dateFrom; if (filters.dateTo) query.createdAt.$lte = filters.dateTo; } const { items, totalItems } = await repository.findTransactions(query, filters.page, filters.limit); return { items, pagination: { page: filters.page, limit: filters.limit, totalItems, totalPages: Math.ceil(totalItems / filters.limit) } }; };
 const getSummary = async (academicSession) => ({ academicSession: academicSession || null, totalAllocated: 0, totalReserved: 0, totalUtilized: 0, totalAvailable: 0, activeBudgets: 0, closedBudgets: 0, ...(await repository.summarize(academicSession) || {}), _id: undefined });
 
-module.exports = { createAnnualBudget, adjustBudget, manualAdjustment, closeBudget, listBudgets, getBudget, getCurrentBudget, listTransactions, getSummary, reserveBudget, releaseReservedBudget, utilizeReservedBudget };
+module.exports = { requireCurrentSession, createAnnualBudget, adjustBudget, setAllocation, manualAdjustment, closeBudget, listBudgets, getBudget, getCurrentBudget, listTransactions, getSummary, reserveBudget, releaseReservedBudget, utilizeReservedBudget };

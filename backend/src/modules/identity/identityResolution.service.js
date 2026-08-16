@@ -1,0 +1,11 @@
+const Student = require("../studentMaster/studentMaster.model"), User = require("../users/user.model");
+const { normalizeEmail, normalizeRollNumber, normalizeContact } = require("./identityNormalization");
+const safe = (item) => item ? { publicId: item.publicId, name: item.name || item.displayName, email: item.email, rollNumber: item.rollNumber } : null;
+const batchResolve = async (rows) => {
+  const normalized = rows.map((row) => ({ ...row, email: normalizeEmail(row.email), rollNumber: normalizeRollNumber(row.rollNumber) || null, normalizedContact: normalizeContact(row.contactNumber) || null }));
+  const values = (field) => [...new Set(normalized.map((row) => row[field]).filter(Boolean))], emails = values("email"), rolls = values("rollNumber"), contacts = values("normalizedContact");
+  const [students, users] = await Promise.all([Student.find({ $or: [{ email: { $in: emails } }, { rollNumber: { $in: rolls } }, { normalizedContact: { $in: contacts } }] }).select("publicId name email rollNumber normalizedContact").lean(), User.find({ $or: [{ email: { $in: emails } }, { normalizedContact: { $in: contacts } }] }).select("publicId displayName email normalizedContact studentMasterId").lean()]);
+  const index = (items, field) => new Map(items.filter((item) => item[field]).map((item) => [item[field], item])), maps = { se: index(students, "email"), sr: index(students, "rollNumber"), sc: index(students, "normalizedContact"), ue: index(users, "email"), uc: index(users, "normalizedContact") };
+  return normalized.map((row) => { const matches = [maps.se.get(row.email), maps.sr.get(row.rollNumber), maps.sc.get(row.normalizedContact), maps.ue.get(row.email), maps.uc.get(row.normalizedContact)].filter(Boolean), unique = [...new Map(matches.map((item) => [String(item._id), item])).values()]; if (!unique.length) return { row, classification: "VALID", existing: null }; const same = unique.every((item) => (!row.email || item.email === row.email) && (!row.rollNumber || !item.rollNumber || item.rollNumber === row.rollNumber)); return { row, classification: same ? "EXISTING" : "IDENTITY_CONFLICT", existing: safe(unique.find((item) => item.rollNumber) || unique[0]) }; });
+};
+module.exports = { batchResolve };

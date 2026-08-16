@@ -1,13 +1,16 @@
-const service = require("./societyBudget.service");
-
-const create = async (req, res) => { const budget = await service.createAnnualBudget(req.body); res.status(201).json({ success: true, message: "Society annual budget created successfully", data: { budget } }); };
-const list = async (req, res) => res.status(200).json({ success: true, data: await service.listBudgets(req.budgetFilters) });
-const getOne = async (req, res) => res.status(200).json({ success: true, data: { budget: await service.getBudget(req.params.budgetId) } });
-const current = async (req, res) => res.status(200).json({ success: true, data: { budget: await service.getCurrentBudget(req.params.societyId, req.academicSession) } });
-const adjust = async (req, res) => res.status(200).json({ success: true, message: "Budget allocation adjusted successfully", data: { budget: await service.adjustBudget(req.params.budgetId, req.body) } });
-const manualAdjustment = async (req, res) => res.status(200).json({ success: true, message: "Budget manually adjusted successfully", data: { budget: await service.manualAdjustment(req.params.budgetId, req.body) } });
-const close = async (req, res) => res.status(200).json({ success: true, message: "Budget closed successfully", data: { budget: await service.closeBudget(req.params.budgetId, req.body) } });
-const transactions = async (req, res) => res.status(200).json({ success: true, data: await service.listTransactions(req.params.budgetId, req.transactionFilters) });
-const summary = async (req, res) => res.status(200).json({ success: true, data: await service.getSummary(req.academicSession) });
-
-module.exports = { create, list, getOne, current, adjust, manualAdjustment, close, transactions, summary };
+const service = require("./societyBudget.service"), imports = require("./societyBudgetImport.service"), events = require("../../common/events/domainEvent.service");
+const changed=(budget,operation)=>{events.publish("BUDGET_UPDATED",{metadata:{budgetId:String(budget._id),societyId:String(budget.societyId),operation,version:budget.__v}});return budget;};
+const create = async (req, res) => { const budget = changed(await service.createAnnualBudget({ ...req.body, createdBy: req.auth.userId, updatedBy: req.auth.userId }),"CREATED"); res.status(201).json({ success: true, message: "Society annual budget created successfully", data: { budget } }); };
+const list = async (req, res) => res.json({ success: true, data: await service.listBudgets(req.budgetFilters) });
+const getOne = async (req, res) => res.json({ success: true, data: { budget: await service.getBudget(req.params.budgetId) } });
+const current = async (req, res) => res.json({ success: true, data: { budget: await service.getCurrentBudget(req.params.societyId, req.academicSession) } });
+const adjust = async (req, res) => res.json({ success: true, data: { budget: changed(await service.adjustBudget(req.params.budgetId, { ...req.body, createdBy: req.auth.userId }),"ADJUSTED") } });
+const setAllocation = async (req, res) => res.json({ success: true, data: { budget: changed(await service.setAllocation(req.params.budgetId, { ...req.body, createdBy: req.auth.userId }),"ALLOCATION_SET") } });
+const manualAdjustment = async (req, res) => res.json({ success: true, data: { budget: changed(await service.manualAdjustment(req.params.budgetId, { ...req.body, createdBy: req.auth.userId }),"MANUAL_ADJUSTMENT") } });
+const close = async (req, res) => res.json({ success: true, data: { budget: changed(await service.closeBudget(req.params.budgetId, { ...req.body, createdBy: req.auth.userId }),"CLOSED") } });
+const transactions = async (req, res) => res.json({ success: true, data: await service.listTransactions(req.params.budgetId, req.transactionFilters) });
+const summary = async (req, res) => res.json({ success: true, data: await service.getSummary(req.academicSession) });
+const template = async (req, res) => { const buffer = await imports.template(); res.set({ "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": 'attachment; filename="Annual-Budget-Import-Template.xlsx"' }); res.send(buffer); };
+const previewImport = async (req, res) => { await service.requireCurrentSession(); res.json({ success: true, data: await imports.preview(req.file, req.auth.userId) }); };
+const confirmImport = async (req, res) => { await service.requireCurrentSession(); res.json({ success: true, data: await imports.confirm(req.params.importSessionId, req.auth.userId) }); };
+module.exports = { create, list, getOne, current, adjust, setAllocation, manualAdjustment, close, transactions, summary, template, previewImport, confirmImport };

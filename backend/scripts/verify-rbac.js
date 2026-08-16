@@ -1,3 +1,6 @@
+process.env.GOOGLE_CLIENT_ID ||= "verification-client";
+process.env.JWT_ACCESS_SECRET ||= "verification-access-secret-32-characters-long";
+process.env.JWT_REFRESH_SECRET ||= "verification-refresh-secret-32-characters-long";
 const assert = require("node:assert/strict");
 const mongoose = require("mongoose");
 const {
@@ -35,6 +38,8 @@ const expectCode = async (fn, code) => {
       isLoginAllowed: true,
     });
     ids.users.push(user._id);
+    const studentUser=await User.create({email:`rbac-student-${stamp}@example.test`,displayName:"RBAC Student",accountType:"STUDENT",status:"ACTIVE",isLoginAllowed:true});
+    ids.users.push(studentUser._id);
     for (const suffix of ["A", "B", "C"]) {
       const s = await Society.create({
         name: `RBAC Verify ${stamp} ${suffix}`,
@@ -135,7 +140,7 @@ const expectCode = async (fn, code) => {
     });
     const gs = await Role.findOne({ code: "GENERAL_SECRETARY" });
     await assignmentService.createAssignment({
-      userId: user._id,
+      userId: studentUser._id,
       roleId: gs._id,
       scopeType: "SOCIETY",
       societyId: ids.societies[0],
@@ -144,7 +149,7 @@ const expectCode = async (fn, code) => {
     await expectCode(
       () =>
         assignmentService.createAssignment({
-          userId: user._id,
+          userId: studentUser._id,
           roleId: gs._id,
           scopeType: "SOCIETY",
           societyId: ids.societies[1],
@@ -155,37 +160,37 @@ const expectCode = async (fn, code) => {
     const lead = await Role.findOne({ code: "LEAD" }),
       member = await Role.findOne({ code: "MEMBER" });
     await assignmentService.createAssignment({
-      userId: user._id,
+      userId: studentUser._id,
       roleId: lead._id,
       scopeType: "SOCIETY",
       societyId: ids.societies[1],
       academicSession: "VERIFY-L",
     });
     await assignmentService.createAssignment({
-      userId: user._id,
+      userId: studentUser._id,
       roleId: member._id,
       scopeType: "SOCIETY",
       societyId: ids.societies[2],
       academicSession: "VERIFY-M",
     });
     await Assignment.updateMany(
-      { userId: user._id, roleId: { $in: [president._id, gs._id] } },
+      { userId: { $in:[user._id,studentUser._id] }, roleId: { $in: [president._id, gs._id] } },
       { $set: { status: "ENDED", isOngoing: false } },
     );
-    const primary = await auth.resolvePrimaryDashboardRole(user._id);
+    const primary = await auth.resolvePrimaryDashboardRole(studentUser._id);
     assert.equal(primary.role.code, "LEAD");
     await Assignment.create({
-      userId: user._id,
+      userId: studentUser._id,
       roleId: customResult.entity._id,
       scopeType: "SOCIETY",
       societyId: ids.societies[2],
       academicSession: "VERIFY-EXPIRED",
       validUntil: new Date(Date.now() - 86400000),
       status: "ACTIVE",
-      isOngoing: true,
+      isOngoing: false,
     });
     check = await auth.hasPermission({
-      userId: user._id,
+      userId: studentUser._id,
       permissionCode: "society.view",
       societyId: ids.societies[2],
     });
@@ -204,11 +209,14 @@ const expectCode = async (fn, code) => {
       () => roleService.updateStatus(protectedRole._id, "ARCHIVED"),
       "SYSTEM_ROLE_PROTECTED"
     );
-    await assignmentService.createAssignment({
+    await Assignment.create({
       userId: user._id,
       roleId: protectedRole._id,
       scopeType: "GLOBAL",
+      societyId: null,
       academicSession: "VERIFY-SA",
+      status: "ACTIVE",
+      isOngoing: true,
     });
     const effective = await auth.getEffectivePermissions({ userId: user._id });
     assert.equal(

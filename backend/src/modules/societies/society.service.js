@@ -3,6 +3,9 @@ const AppError = require("../../common/errors/AppError");
 const repository = require("./society.repository");
 const { SOCIETY_STATUSES } = require("./society.constants");
 const { prepareSocietyCode } = require("./societyCode.service");
+const invalidate=require("../../cache/cacheInvalidation");
+const events=require("../../common/events/domainEvent.service");
+const emit=(eventType,society)=>events.publish(eventType,{metadata:{societyId:String(society._id),societyCode:society.code}});
 
 const assertValidId = (id) => {
   if (!mongoose.Types.ObjectId.isValid(id) || !/^[a-f\d]{24}$/i.test(id)) {
@@ -37,7 +40,7 @@ const synchronizeStatus = (data) => {
   return synchronized;
 };
 
-const createSociety = async (data) => {
+const createSociety = async (data, options = {}) => {
   const prepared = await prepareSocietyCode({
     suppliedCode: data.code,
     name: data.name,
@@ -48,7 +51,7 @@ const createSociety = async (data) => {
   if (!prepared.regenerated && await repository.findByCode(prepared.code)) throwCodeExists();
 
   try {
-    return await repository.create(synchronizeStatus({ ...data, code: prepared.code }));
+    const item=await repository.create(synchronizeStatus({ ...data, code: prepared.code }));if(!options.skipCacheInvalidation)await invalidate.societies();emit("SOCIETY_CREATED",item);return item;
   } catch (error) {
     return handleDuplicateCode(error);
   }
@@ -56,7 +59,7 @@ const createSociety = async (data) => {
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const listSocieties = async (filters) => {
+const listSocieties = async (filters, req) => {
   const query = {};
 
   if (filters.search) {
@@ -70,7 +73,8 @@ const listSocieties = async (filters) => {
   const { items, totalItems } = await repository.findAll(
     query,
     filters.page,
-    filters.limit
+    filters.limit,
+    req
   );
 
   return {
@@ -100,7 +104,7 @@ const updateSociety = async (id, data) => {
 
   if (data.code) {
     const societyWithCode = await repository.findByCode(data.code);
-    if (societyWithCode && societyWithCode.id !== id) throwCodeExists();
+    if (societyWithCode && String(societyWithCode._id) !== String(id)) throwCodeExists();
   }
 
   try {
@@ -108,7 +112,7 @@ const updateSociety = async (id, data) => {
     if (!society) {
       throw new AppError("Society not found", 404, "SOCIETY_NOT_FOUND");
     }
-    return society;
+    await invalidate.societies();emit("SOCIETY_UPDATED",society);return society;
   } catch (error) {
     return handleDuplicateCode(error);
   }
@@ -126,7 +130,7 @@ const updateSocietyStatus = async (id, status) => {
     throw new AppError("Society not found", 404, "SOCIETY_NOT_FOUND");
   }
 
-  return society;
+  await invalidate.societies();emit("SOCIETY_STATUS_CHANGED",society);return society;
 };
 
 module.exports = {

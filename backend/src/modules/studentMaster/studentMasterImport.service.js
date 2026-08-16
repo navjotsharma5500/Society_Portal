@@ -1,9 +1,13 @@
 const ExcelJS = require("exceljs");
+const mongoose = require("mongoose");
+const { gzipSync, gunzipSync } = require("node:zlib");
 const AppError = require("../../common/errors/AppError");
 const Student = require("./studentMaster.model");
 const Society = require("../societies/society.model");
 const Session = require("./models/studentImportSession.model");
 const studentService = require("./studentMaster.service");
+const User = require("../users/user.model");
+const { reservePublicIds } = require("../publicIds/publicId.service");
 const { IMPORT_STATUSES, EMAIL_PATTERN } = require("./studentMaster.constants");
 const { studentColumns, header } = require("./studentMasterTemplate.service");
 const clean = (v) => {
@@ -34,11 +38,18 @@ const bool = (v) => {
 };
 const date = (v) => {
   if (!v) return null;
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
-  if (typeof v === "number")
-    return new Date(Math.round((v - 25569) * 86400 * 1000));
-  const d = new Date(clean(v));
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (v instanceof Date && !Number.isNaN(v.getTime()))
+    return new Date(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()));
+  if (typeof v === "number") {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const text = clean(v);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text || "")) return null;
+  const d = new Date(`${text}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== text
+    ? null
+    : d;
 };
 const aliases = {
   name: "name",
@@ -68,6 +79,7 @@ const aliases = {
   country: "country",
   isLoginAllowed: "login allowed",
   recordStatus: "record status",
+  profilePictureUrl: "profile picture url optional",
 };
 const mapHeaders = (sheet) => {
   const m = {};
@@ -137,6 +149,7 @@ const parse = async (buffer, defaultSession) => {
       isLoginAllowed: bool(val(r, map, "isLoginAllowed")) ?? true,
       recordStatus:
         clean(val(r, map, "recordStatus"))?.toUpperCase() || "ACTIVE",
+      profilePictureUrl: clean(val(r, map, "profilePictureUrl")),
       defaultSession,
     });
   });
@@ -182,38 +195,27 @@ const parse = async (buffer, defaultSession) => {
   return raw;
 };
 const validate = async (raw) => {
-  const emails = raw.map((r) => r.email).filter(Boolean),
-    rolls = raw.map((r) => r.rollNumber).filter(Boolean);
-  const existing = await Student.find(
-    { $or: [{ email: { $in: emails } }, { rollNumber: { $in: rolls } }] },
-    { email: 1, rollNumber: 1 },
-  ).lean();
-  const existingEmails = new Set(existing.map((x) => x.email)),
-    existingRolls = new Set(existing.map((x) => x.rollNumber).filter(Boolean)),
+  const normalization = require("../identity/identityNormalization"), resolutions = await require("../identity/identityResolution.service").batchResolve(raw),
     seenEmails = new Set(),
-    seenRolls = new Set();
-  return raw.map((r) => {
+    seenRolls = new Set(), seenContacts = new Set();
+  return resolutions.map(({ row: r, classification, existing }) => {
     const warnings = [],
       errors = [];
     if (!r.name || !r.email || !r.contactNumber)
       errors.push("MANDATORY_FIELD_MISSING");
     if (r.email && !EMAIL_PATTERN.test(r.email)) errors.push("INVALID_EMAIL");
     if (
-      r.cgpa !== null &&
+      r.cgpa != null &&
       (!Number.isFinite(r.cgpa) || r.cgpa < 0 || r.cgpa > 10)
     )
       errors.push("INVALID_CGPA");
     if (r.invalidDate) errors.push("INVALID_DATE");
-    if (r.societyReferences.some((x) => x.metadata.unresolved))
+    if (r.profilePictureUrl && !/^https?:\/\/\S+$/i.test(r.profilePictureUrl)) errors.push("INVALID_PROFILE_PICTURE_URL");
+    if ((r.societyReferences || []).some((x) => x.metadata.unresolved))
       warnings.push("SOCIETY_REFERENCE_NOT_FOUND");
     let action = "IMPORT";
-    if (
-      existingEmails.has(r.email) ||
-      (r.rollNumber && existingRolls.has(r.rollNumber))
-    ) {
-      warnings.push("STUDENT_ALREADY_EXISTS");
-      action = "SKIP";
-    }
+    if (classification === "EXISTING") { warnings.push("STUDENT_ALREADY_EXISTS"); action = "SKIP"; }
+    if (classification === "IDENTITY_CONFLICT") { errors.push("IDENTITY_CONFLICT"); action = "SKIP"; }
     if (seenEmails.has(r.email)) {
       errors.push("DUPLICATE_EMAIL_IN_UPLOAD");
       action = "SKIP";
@@ -222,10 +224,14 @@ const validate = async (raw) => {
       errors.push("DUPLICATE_ROLL_NUMBER_IN_UPLOAD");
       action = "SKIP";
     }
+    if (r.normalizedContact && seenContacts.has(r.normalizedContact)) { errors.push("DUPLICATE_CONTACT_IN_UPLOAD"); action = "SKIP"; }
     if (r.email) seenEmails.add(r.email);
     if (r.rollNumber) seenRolls.add(r.rollNumber);
+    if (r.normalizedContact) seenContacts.add(r.normalizedContact);
     return {
       ...r,
+      classification: errors.length ? (errors.some((x) => x === "IDENTITY_CONFLICT") ? "IDENTITY_CONFLICT" : errors.some((x) => x.startsWith("DUPLICATE_")) ? "DUPLICATE_IN_FILE" : "INVALID") : classification,
+      existingReference: existing,
       warnings,
       errors,
       action,
@@ -239,7 +245,12 @@ const summary = (rows) => ({
   warningRows: rows.filter((r) => r.warnings.length).length,
   invalidRows: rows.filter((r) => r.errors.length).length,
   skippedRows: rows.filter((r) => r.action === "SKIP").length,
+  existingRows: rows.filter((r) => r.classification === "EXISTING").length,
+  conflictRows: rows.filter((r) => r.classification === "IDENTITY_CONFLICT").length,
 });
+const pack = (value) => gzipSync(Buffer.from(JSON.stringify(value)));
+const unpack = (value, fallback = []) => value ? JSON.parse(gunzipSync(value).toString("utf8")) : fallback;
+const sessionRows = (session) => session.normalizedRowsGzip?.length ? unpack(session.normalizedRowsGzip) : session.normalizedRows;
 const previewImport = async (file, academicSession) => {
   let raw;
   try {
@@ -258,7 +269,7 @@ const previewImport = async (file, academicSession) => {
       status: IMPORT_STATUSES.PREVIEWED,
       sourceFileName: file.originalname,
       ...sum,
-      normalizedRows: rows,
+      normalizedRowsGzip: pack(rows),
       expiresAt: new Date(Date.now() + 30 * 60 * 1000),
     });
   return { importSessionId: session.id, summary: sum, rows };
@@ -278,10 +289,10 @@ const getImportSession = async (id) => {
   return {
     importSessionId: s.id,
     status: s.status,
-    summary: summary(s.normalizedRows),
-    rows: s.normalizedRows,
+    summary: summary(sessionRows(s)),
+    rows: sessionRows(s),
     importSummary: s.importSummary,
-    importResults: s.importResults,
+    importResults: s.importResultsGzip?.length ? unpack(s.importResultsGzip) : s.importResults,
   };
 };
 const confirmImport = async (id) => {
@@ -292,7 +303,7 @@ const confirmImport = async (id) => {
       status: IMPORT_STATUSES.PREVIEWED,
     },
     { $set: { status: IMPORT_STATUSES.FAILED } },
-    { new: true },
+    { returnDocument: "after" },
   );
   if (!s) {
     await findSession(id);
@@ -302,8 +313,23 @@ const confirmImport = async (id) => {
       "STUDENT_IMPORT_SESSION_ALREADY_USED",
     );
   }
+  const revalidatedRows = await validate(sessionRows(s).map((row) => row.toObject ? row.toObject() : row));
   const results = [];
-  for (const r of s.normalizedRows) {
+  const accepted = revalidatedRows.filter((r) => r.importable && r.action !== "SKIP");
+  const [studentPublicIds, userPublicIds] = await Promise.all([reservePublicIds("STUDENT", accepted.length), reservePublicIds("USER", accepted.length)]);
+  const studentDocs = [], userDocs = [], acceptedByEmail = new Map();
+  for (let index = 0; index < accepted.length; index += 1) {
+    const r = accepted[index], studentId = new mongoose.Types.ObjectId();
+    studentDocs.push({ _id: studentId, publicId: studentPublicIds[index], name:r.name,email:r.email,contactNumber:r.contactNumber,normalizedContact:r.normalizedContact,rollNumber:r.rollNumber,course:r.course,branch:r.branch,year:r.year,cgpa:r.cgpa,dateOfBirth:r.dateOfBirth,bloodGroup:r.bloodGroup,hostel:r.hostel,roomType:r.roomType,roomNumber:r.roomNumber,fatherName:r.fatherName,fatherEmail:r.fatherEmail,fatherContact:r.fatherContact,motherName:r.motherName,motherEmail:r.motherEmail,motherContact:r.motherContact,permanentAddress:r.permanentAddress,importedSocietyReferences:r.societyReferences,isLoginAllowed:r.isLoginAllowed,recordStatus:r.recordStatus,profilePictureUrl:r.profilePictureUrl,metadata:{importSource:"STUDENT_MASTER_EXCEL",sourceRowNumber:r.rowNumber} });
+    userDocs.push({ publicId:userPublicIds[index],email:r.email,displayName:r.name,accountType:"STUDENT",status:"PENDING_ONBOARDING",studentMasterId:studentId,isLoginAllowed:r.isLoginAllowed });
+    acceptedByEmail.set(r.email, { studentId, userId: null });
+  }
+  const bulkInsert = async (Model, docs) => { const failed = new Map(); if (!docs.length) return failed; for (let offset=0; offset<docs.length; offset+=1000) { const chunk=docs.slice(offset,offset+1000); try { await Model.insertMany(chunk,{ordered:false}); } catch(error) { for (const item of error.writeErrors||[]) failed.set(chunk[item.index]?.email, item.err?.code||error.code||"IMPORT_FAILED"); if (!(error.writeErrors||[]).length) throw error; } } return failed; };
+  const studentFailures = await bulkInsert(Student, studentDocs);
+  const viableUsers = userDocs.filter((doc) => !studentFailures.has(doc.email));
+  const userFailures = await bulkInsert(User, viableUsers);
+  if (userFailures.size) await Student.updateMany({ email:{ $in:[...userFailures.keys()] }, "metadata.importSource":"STUDENT_MASTER_EXCEL" }, { $set:{recordStatus:"INACTIVE",isLoginAllowed:false,"metadata.userCreationFailed":true} });
+  for (const r of revalidatedRows) {
     const out = {
       rowNumber: r.rowNumber,
       email: r.email,
@@ -316,41 +342,20 @@ const confirmImport = async (id) => {
       continue;
     }
     try {
-      const { student, user } = await studentService.createStudent({
-        name: r.name,
-        email: r.email,
-        contactNumber: r.contactNumber,
-        rollNumber: r.rollNumber,
-        course: r.course,
-        branch: r.branch,
-        year: r.year,
-        cgpa: r.cgpa,
-        dateOfBirth: r.dateOfBirth,
-        bloodGroup: r.bloodGroup,
-        hostel: r.hostel,
-        roomType: r.roomType,
-        roomNumber: r.roomNumber,
-        fatherName: r.fatherName,
-        fatherEmail: r.fatherEmail,
-        fatherContact: r.fatherContact,
-        motherName: r.motherName,
-        motherEmail: r.motherEmail,
-        motherContact: r.motherContact,
-        permanentAddress: r.permanentAddress,
-        importedSocietyReferences: r.societyReferences,
-        isLoginAllowed: r.isLoginAllowed,
-        recordStatus: r.recordStatus,
-        metadata: {
-          importSource: "STUDENT_MASTER_EXCEL",
-          sourceRowNumber: r.rowNumber,
-        },
-      });
+      const failure = studentFailures.get(r.email) || userFailures.get(r.email);
+      if (failure) throw Object.assign(new Error("Bulk import failed"), { code: failure });
+      const linked = acceptedByEmail.get(r.email);
+      const student = { id: linked.studentId }, user = viableUsers.find((item)=>item.email===r.email);
+      /* Values were revalidated and inserted in bounded unordered batches above. */
+      if (!linked || !user) throw Object.assign(new Error("Bulk import failed"), { code: "IMPORT_FAILED" });
       out.studentId = student.id;
-      out.userId = user.id;
+      out.userId = String(user._id);
       out.studentStatus = "CREATED";
       out.userStatus = "CREATED";
     } catch (e) {
       out.studentStatus = [
+        "USER_ALREADY_EXISTS",
+        "IDENTITY_CONFLICT",
         "STUDENT_EMAIL_EXISTS",
         "STUDENT_ROLL_NUMBER_EXISTS",
         "USER_EMAIL_EXISTS",
@@ -374,7 +379,8 @@ const confirmImport = async (id) => {
   s.status = IMPORT_STATUSES.IMPORTED;
   s.importedAt = new Date();
   s.importSummary = sum;
-  s.importResults = results;
+  s.importResults = [];
+  s.importResultsGzip = pack(results);
   await s.save();
   return { importSessionId: s.id, summary: sum, results };
 };
@@ -431,6 +437,7 @@ const exportStudents = async (filters) => {
       s.permanentAddress?.country,
       s.isLoginAllowed,
       s.recordStatus,
+      s.profilePictureUrl,
     ]);
     for (const r of s.importedSocietyReferences || [])
       refs.addRow([
@@ -446,6 +453,7 @@ const exportStudents = async (filters) => {
   return wb.xlsx.writeBuffer();
 };
 module.exports = {
+  validate,
   previewImport,
   getImportSession,
   confirmImport,

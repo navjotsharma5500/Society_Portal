@@ -1,4 +1,8 @@
-import { NavLink } from 'react-router-dom'
-import { navigationItems } from './navConfig'
-import { useToast } from '../common/toastContext'
-export default function DesktopSidebar(){const{notify}=useToast();return <aside className="sidebar desktop-only"><div className="brand"><strong>TIET Society Portal</strong><span>Super Admin Console</span></div><nav className="sidebar-nav" aria-label="Primary navigation">{navigationItems.map(({label,to,icon:Icon})=>to?<NavLink key={label} end={to==='/admin'} to={to} className={({isActive})=>`nav-item ${isActive?'active':''}`}><Icon size={19}/>{label}</NavLink>:<button key={label} className="nav-item" onClick={()=>notify(`${label} is coming soon`,'info')}><Icon size={19}/>{label}</button>)}</nav><div className="sidebar-spacer" aria-hidden="true"/></aside>}
+import {NavLink} from 'react-router-dom'
+import {ChevronLeft,ChevronRight,X} from 'lucide-react'
+import TietLogo from '../branding/TietLogo'
+import {navigationItems} from './navConfig'
+import {useToast} from '../common/toastContext'
+import {useCapability} from '../../modules/rbac/hooks/useCapability'
+import {filterNavigation} from '../../modules/rbac/utils/permissions'
+export default function DesktopSidebar({collapsed=false,onToggle,mobile=false,onClose}){const{notify}=useToast(),can=useCapability();return <aside className={`sidebar ${mobile?'sidebar-mobile':'desktop-only'} ${collapsed?'collapsed':''}`}><div className="brand"><div className="sidebar-brand-identity"><TietLogo size="small" className="sidebar-brand-logo"/>{!collapsed&&<div><strong>TIET Society Portal</strong><span>Super Admin Console</span></div>}</div>{mobile&&<button className="icon-button" onClick={onClose} aria-label="Close menu"><X size={18}/></button>}</div><nav className="sidebar-nav" aria-label="Primary navigation">{filterNavigation(navigationItems,can).map(({label,to,icon:Icon})=>to?<NavLink key={label} title={collapsed?label:undefined} end={to==='/admin'} to={to} onClick={onClose} className={({isActive})=>`nav-item ${isActive?'active':''}`}><Icon size={18}/>{!collapsed&&label}</NavLink>:<button key={label} title={collapsed?label:undefined} className="nav-item" onClick={()=>notify(`${label} is coming soon`,'info')}><Icon size={18}/>{!collapsed&&label}</button>)}</nav>{!mobile&&<button className="sidebar-toggle" onClick={onToggle} aria-label={collapsed?'Expand sidebar':'Collapse sidebar'}>{collapsed?<ChevronRight size={16}/>:<ChevronLeft size={16}/>}</button>}<div className="sidebar-spacer" aria-hidden="true"/></aside>}

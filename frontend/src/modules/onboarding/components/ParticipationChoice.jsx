@@ -1,0 +1,2 @@
+import {Building2,UserPlus} from 'lucide-react'
+export default function ParticipationChoice({existing,join,onChange}){return <div className="participation-choice"><button type="button" className={existing?'selected':''} onClick={()=>onChange('existing',!existing)}><Building2/><b>Already in a Society</b><span>Add your current or previous verified society participation.</span></button><button type="button" className={join?'selected':''} onClick={()=>onChange('join',!join)}><UserPlus/><b>Join a Society</b><span>Request to join a society as a new Member.</span></button></div>}

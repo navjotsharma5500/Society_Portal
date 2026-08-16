@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const AppError = require("../../common/errors/AppError");
 const Society = require("../societies/society.model");
+const User = require("../users/user.model");
+const Role = require("../roles/role.model");
+const Assignment = require("../userRoleAssignments/userRoleAssignment.model");
+const assignmentService = require("../userRoleAssignments/userRoleAssignment.service");
+const events = require("../../common/events/domainEvent.service");
 const repository = require("./societyLeadership.repository");
 const { LEADERSHIP_ROLES, LEADERSHIP_STATUSES } = require("./societyLeadership.constants");
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -47,18 +52,29 @@ const duplicateFields = (data) => ({
 
 const createLeadershipAssignment = async (data) => {
   const society = await getExistingSociety(data.societyId);
+  let scopedAssignment=null;
+  if(data.userId){
+    const user=await User.findById(data.userId).select("displayName email profilePhotoUrl profilePictureUrl metadata accountType");
+    if(!user)throw new AppError("User not found",404,"USER_NOT_FOUND");
+    const role=await Role.findOne({code:data.role,status:"ACTIVE",isAssignable:true,isLeadershipRole:true,scopeType:{$in:["SOCIETY","BOTH"]}});
+    if(!role)throw new AppError("Leadership role is inactive, incompatible, or not assignable",409,"ROLE_INACTIVE");
+    data={...data,name:user.displayName,email:user.email,contactNumber:user.metadata?.contactNumber||user.metadata?.contact,department:user.metadata?.department,designation:user.metadata?.designation,metadata:{...(data.metadata||{}),roleId:role._id}};
+    const result=await assignmentService.createAssignment({userId:user._id,roleId:role._id,scopeType:"SOCIETY",societyId:data.societyId,academicSession:data.academicSession,validFrom:data.startDate,validUntil:data.endDate,isOngoing:data.isOngoing!==false,status:data.status||"ACTIVE",assignmentSource:"IMPORT",createdBy:data.createdBy});
+    scopedAssignment=result.entity;
+  }
   assertSocietyAllowsActiveAssignment(society, data);
-  if (await repository.findDuplicateAssignment(duplicateFields(data))) throwDuplicate();
+  if (await repository.findDuplicateAssignment(duplicateFields(data))) { if(scopedAssignment)await assignmentService.endAssignment(scopedAssignment._id,data.createdBy,"Leadership creation rolled back"); throwDuplicate(); }
   try {
-    return await repository.create(data);
+    const leadership=await repository.create(data);events.publish("SOCIETY_LEADERSHIP_UPDATED",{userId:data.userId,metadata:{societyId:String(data.societyId),leadershipId:String(leadership._id)}});return leadership;
   } catch (error) {
+    if(scopedAssignment)await assignmentService.endAssignment(scopedAssignment._id,data.createdBy,"Leadership creation rolled back").catch(()=>{});
     return handleDuplicate(error);
   }
 };
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const listLeadershipAssignments = async (filters) => {
+const listLeadershipAssignments = async (filters, req) => {
   const query = {};
   for (const field of ["societyId", "role", "academicSession", "status", "isOngoing"]) {
     if (filters[field] !== undefined) query[field] = filters[field];
@@ -68,7 +84,7 @@ const listLeadershipAssignments = async (filters) => {
     const search = new RegExp(escapeRegex(filters.search), "i");
     query.$or = ["name", "email", "designation", "department"].map((field) => ({ [field]: search }));
   }
-  const { items, totalItems } = await repository.findAll(query, filters.page, filters.limit);
+  const { items, totalItems } = await repository.findAll(query, filters.page, filters.limit, req);
   return {
     items,
     pagination: {
@@ -111,12 +127,14 @@ const updateLeadershipAssignment = async (id, data) => {
   }
 };
 
-const endLeadershipAssignment = async (id, { endDate, reason }) => {
+const endLeadershipAssignment = async (id, { endDate, reason, updatedBy }) => {
   const current = await getLeadershipAssignment(id);
   if (current.startDate && endDate < current.startDate) {
     throw new AppError("endDate cannot be before startDate", 400, "INVALID_DATE_RANGE");
   }
-  return repository.endAssignment(id, endDate, reason);
+  const ended=await repository.endAssignment(id,endDate,reason);
+  if(current.userId){const role=await Role.findOne({code:current.role}).select("_id").lean();if(role){const assignment=await Assignment.findOne({userId:current.userId,roleId:role._id,scopeType:"SOCIETY",societyId:current.societyId,academicSession:current.academicSession,status:"ACTIVE",isOngoing:true});if(assignment)await assignmentService.endAssignment(assignment._id,updatedBy,reason)}}
+  events.publish("SOCIETY_LEADERSHIP_UPDATED",{userId:current.userId,metadata:{societyId:String(current.societyId),leadershipId:String(current._id)}});return ended;
 };
 
 const updateLeadershipStatus = async (id, status) => {

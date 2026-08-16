@@ -1,0 +1,2 @@
+import {CheckCircle2,LoaderCircle,TriangleAlert} from 'lucide-react'
+export default function OnboardingSaveStatus({state}){const config={saved:[CheckCircle2,'Saved'],saving:[LoaderCircle,'Saving…'],error:[TriangleAlert,state.message||'Unable to save']}[state.status]||[CheckCircle2,'Saved'],Icon=config[0];return <span className={`onboarding-save-status is-${state.status}`} aria-live="polite"><Icon size={14} className={state.status==='saving'?'ds-spin':''}/>{config[1]}</span>}

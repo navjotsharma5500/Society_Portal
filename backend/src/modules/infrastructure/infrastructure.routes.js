@@ -1,0 +1,21 @@
+const express = require("express"), mongoose = require("mongoose");
+const AppError = require("../../common/errors/AppError"), Building = require("./building.model"), Venue = require("./venue.model");
+const { authenticateSession } = require("../auth/auth.middleware"), { requirePermission } = require("../authorization/authorization.middleware");
+const router = express.Router(), ok = (res, data, status = 200) => res.status(status).json({ success: true, data }), actor = (body, id) => ({ ...body, code: body.code?.trim().toUpperCase(), updatedBy: id });
+const cache=require("../../cache/cacheService"),keys=require("../../cache/cacheKeys"),ttl=require("../../cache/cacheTtls"),invalidate=require("../../cache/cacheInvalidation");
+router.use((req,res,next)=>{if(["POST","PATCH","PUT","DELETE"].includes(req.method))res.on("finish",()=>{if(res.statusCode<400)(req.path.includes("building")?invalidate.buildings():invalidate.venues());});next();});
+const imports = require("../masterImports/masterImport.service"), importValidation = require("../masterImports/masterImport.validation");
+const infrastructure = require("./infrastructure.service");
+for (const [path, type, filename] of [["buildings", "BUILDING", "Building-Import-Template.xlsx"], ["venues", "VENUE", "Venue-Import-Template.xlsx"]]) {
+  router.get(`/${path}/import/template`, authenticateSession, requirePermission("infrastructure.import"), async (req, res) => { const buffer = await imports.makeTemplate(type); res.set({ "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="${filename}"` }); res.send(buffer); });
+  router.post(`/${path}/import/preview`, authenticateSession, requirePermission("infrastructure.import"), importValidation.uploadExcel, async (req, res) => ok(res, await imports.preview(type, req.file, req.auth.userId)));
+  router.post(`/${path}/import/:id/confirm`, authenticateSession, requirePermission("infrastructure.import"), async (req, res) => ok(res, await imports.confirm(req.params.id, req.auth.userId)));
+}
+router.get("/venues/lookup", authenticateSession, async (req, res) => ok(res, { items: await cache.getOrLoad(keys.venuesActive,ttl.venues,()=>Venue.find({ status: "ACTIVE", bookingEnabled: true }).select("name code venueType capacity buildingId").populate({ path: "buildingId", match: { status: "ACTIVE" }, select: "name code campus" }).sort({ sortOrder: 1, name: 1 }).lean().then((rows) => rows.filter((x) => x.buildingId))) }));
+router.get("/buildings", authenticateSession, requirePermission("infrastructure.view"), async (req, res) => ok(res, { items: await Building.find().sort({ sortOrder: 1, name: 1 }).lean() }));
+router.post("/buildings", authenticateSession, requirePermission("infrastructure.manage"), async (req, res) => ok(res, { building: await Building.create({ ...actor(req.body, req.auth.userId), createdBy: req.auth.userId }) }, 201));
+router.patch("/buildings/:id", authenticateSession, requirePermission("infrastructure.manage"), async (req, res) => { const item = mongoose.Types.ObjectId.isValid(req.params.id) && await Building.findByIdAndUpdate(req.params.id, { $set: actor(req.body, req.auth.userId) }, { returnDocument: "after", runValidators: true }); if (!item) throw new AppError("Building not found", 404, "BUILDING_NOT_FOUND"); ok(res, { building: item }); });
+router.get("/venues", authenticateSession, requirePermission("infrastructure.view"), async (req, res) => ok(res, { items: await Venue.find().populate("buildingId", "name code campus status").sort({ sortOrder: 1, name: 1 }).lean() }));
+router.post("/venues", authenticateSession, requirePermission("infrastructure.manage"), async (req, res) => ok(res, { venue: await infrastructure.createVenue(req.body, req.auth.userId) }, 201));
+router.patch("/venues/:id", authenticateSession, requirePermission("infrastructure.manage"), async (req, res) => { const item = mongoose.Types.ObjectId.isValid(req.params.id) && await Venue.findByIdAndUpdate(req.params.id, { $set: actor(req.body, req.auth.userId) }, { returnDocument: "after", runValidators: true }); if (!item) throw new AppError("Venue not found", 404, "VENUE_NOT_FOUND"); ok(res, { venue: item }); });
+module.exports = router;

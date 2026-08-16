@@ -44,5 +44,7 @@ const societySchema = new mongoose.Schema(
 societySchema.index({ name: 1 });
 societySchema.index({ isActive: 1 });
 societySchema.index({ status: 1 });
+societySchema.index({ createdAt: -1 }, { name: "society_recent" });
+societySchema.index({ isActive: 1, createdAt: -1 }, { name: "society_active_recent" });
 
 module.exports = mongoose.model("Society", societySchema);

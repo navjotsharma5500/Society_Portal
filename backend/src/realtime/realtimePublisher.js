@@ -1,0 +1,8 @@
+const E=require("./realtimeEvents"),rooms=require("./socketRooms");
+let io=null;
+const setSocketServer=(server)=>{io=server;};
+const safePayload=(payload={})=>Object.fromEntries(Object.entries(payload).filter(([key,value])=>value!==undefined&&value!==null&&!/token|cookie|email|contact|profile|permissionTree/i.test(key)));
+const publish=(eventName,{userIds=[],societyIds=[],roleTargets=[],eventIds=[],payload={}}={})=>{try{if(!io)return false;const targets=new Set([...userIds.map(rooms.userRoom),...societyIds.map(rooms.societyRoom),...roleTargets.map((target)=>rooms.roleRoom(target.roleCode,target.societyId)),...eventIds.map(rooms.eventRoom)]);const body=safePayload({...payload,changedAt:payload.changedAt||new Date().toISOString()});for(const room of targets)io.to(room).emit(eventName,body);if(process.env.NODE_ENV==="development"&&targets.size)console.info(`[realtime] published ${eventName}`);return true;}catch(error){console.warn(`[realtime] publish failed: ${eventName} (${error.message})`);return false;}};
+const reconcileUser=async(userId)=>{if(!io)return;const sockets=await io.in(rooms.userRoom(userId)).fetchSockets();await Promise.all(sockets.map(rooms.reconcileSocketRooms));};
+const disconnectUser=async(userId,sessionId)=>{if(!io)return;const sockets=await io.in(rooms.userRoom(userId)).fetchSockets();for(const socket of sockets)if(!sessionId||socket.data.sessionId===String(sessionId))socket.disconnect(true);};
+module.exports={events:E,setSocketServer,publish,reconcileUser,disconnectUser,safePayload,isEnabled:()=>Boolean(io),connectionCount:()=>io?.engine?.clientsCount||0};

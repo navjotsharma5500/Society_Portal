@@ -14,6 +14,7 @@ const amount = (value) => {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) fail("amount must be greater than zero", "INVALID_BUDGET_AMOUNT");
   return value;
 };
+const allocation = (value) => { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) fail("allocatedAmount must be zero or greater", "INVALID_BUDGET_AMOUNT"); return value; };
 const session = (value, required = false) => {
   const result = text(value, "academicSession", { required });
   if (result && !ACADEMIC_SESSION_PATTERN.test(result)) fail("academicSession must use YYYY-YY format", "INVALID_ACADEMIC_SESSION");
@@ -31,8 +32,8 @@ const paging = (query) => {
   return { page, limit };
 };
 const validateCreate = (req, res, next) => { try {
-  const allocatedAmount = amount(req.body?.allocatedAmount);
-  req.body = { societyId: text(req.body?.societyId, "societyId", { required: true }), academicSession: session(req.body?.academicSession, true), allocatedAmount, remarks: text(req.body?.remarks, "remarks", { max: 1000 }), metadata: req.body?.metadata, createdBy: req.body?.createdBy };
+  const allocatedAmount = allocation(req.body?.allocatedAmount);
+  req.body = { societyId: text(req.body?.societyId, "societyId", { required: true }), academicSessionId: text(req.body?.academicSessionId, "academicSessionId"), academicSession: session(req.body?.academicSession, !req.body?.academicSessionId), allocatedAmount, remarks: text(req.body?.remarks, "remarks", { max: 1000 }), metadata: req.body?.metadata, createdBy: req.body?.createdBy };
   if (req.body.metadata !== undefined && (req.body.metadata === null || Array.isArray(req.body.metadata) || typeof req.body.metadata !== "object")) fail("metadata must be an object");
   next();
 } catch (error) { next(error); } };
@@ -41,6 +42,7 @@ const validateAdjustment = (req, res, next) => { try {
   if (!Object.values(ADJUSTMENT_TYPES).includes(adjustmentType)) fail("adjustmentType must be INCREASE or DECREASE", "INVALID_ADJUSTMENT_TYPE");
   req.body = { adjustmentType, amount: amount(req.body?.amount), reason: text(req.body?.reason, "reason", { required: true, max: 1000 }), createdBy: req.body?.createdBy }; next();
 } catch (error) { next(error); } };
+const validateSetAllocation = (req, res, next) => { try { req.body = { allocatedAmount: allocation(req.body?.allocatedAmount), reason: text(req.body?.reason, "reason", { required: true, max: 1000 }) }; next(); } catch (error) { next(error); } };
 const validateManual = (req, res, next) => { try {
   const direction = text(req.body?.direction, "direction", { required: true }).toUpperCase();
   if (!Object.values(DIRECTIONS).includes(direction)) fail("direction must be CREDIT or DEBIT", "INVALID_TRANSACTION_DIRECTION");
@@ -60,4 +62,4 @@ const validateTransactions = (req, res, next) => { try {
   req.transactionFilters = { transactionType, dateFrom, dateTo, ...paging(req.query) }; next();
 } catch (error) { next(error); } };
 
-module.exports = { validateCreate, validateAdjustment, validateManual, validateClose, validateList, validateCurrent, validateSummary, validateTransactions };
+module.exports = { validateCreate, validateAdjustment, validateSetAllocation, validateManual, validateClose, validateList, validateCurrent, validateSummary, validateTransactions };

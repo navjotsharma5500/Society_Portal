@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const environment = require("../../config/environment");
 const { version } = require("../../../package.json");
+const realtime = require("../../realtime/realtimePublisher");
+const redis = require("../../cache/redisClient"), cache = require("../../cache/cacheService");
 
 const databaseStates = {
   0: "disconnected",
@@ -21,6 +23,8 @@ const getHealth = (req, res) => {
         databaseStates[mongoose.connection.readyState] || "unknown",
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
+      realtime: { enabled: realtime.isEnabled() },
+      cache: { enabled: redis.isEnabled(), status: redis.getStatus() === "CONNECTED" ? "connected" : redis.getStatus() === "DISABLED" ? "disabled" : "degraded", metrics: cache.metrics() },
     },
   });
 };

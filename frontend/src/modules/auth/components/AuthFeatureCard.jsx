@@ -1,0 +1,1 @@
+export default function AuthFeatureCard({icon:Icon,title,description}){return <div className="auth-feature"><span>{Icon&&<Icon size={18}/>}</span><div><h3>{title}</h3>{description&&<p>{description}</p>}</div></div>}

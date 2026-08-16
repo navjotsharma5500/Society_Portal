@@ -9,6 +9,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const societyLeadershipSchema = new mongoose.Schema(
   {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
     societyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Society",
@@ -18,7 +19,7 @@ const societyLeadershipSchema = new mongoose.Schema(
     role: {
       type: String,
       required: true,
-      enum: Object.values(LEADERSHIP_ROLES),
+      match: /^[A-Z0-9][A-Z0-9_-]*$/,
       uppercase: true,
       trim: true,
     },
@@ -57,6 +58,8 @@ const societyLeadershipSchema = new mongoose.Schema(
 );
 
 societyLeadershipSchema.index({ societyId: 1, role: 1, academicSession: 1 });
+societyLeadershipSchema.index({ createdAt: -1 }, { name: "leadership_recent" });
+societyLeadershipSchema.index({ status: 1, isOngoing: 1, createdAt: -1 }, { name: "leadership_status_recent" });
 societyLeadershipSchema.index(
   { societyId: 1, role: 1, email: 1, academicSession: 1 },
   {

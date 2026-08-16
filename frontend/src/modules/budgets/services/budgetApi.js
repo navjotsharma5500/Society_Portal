@@ -1,0 +1,10 @@
+import apiClient from "../../../services/apiClient";
+const payload = (response) => response.data.data;
+export const loadBudgetPage = async () => { const [sessions, societies] = await Promise.all([apiClient.get("/academic-sessions"), apiClient.get("/societies", { params: { status: "ACTIVE", limit: 100 } })]); return { sessions: Array.isArray(payload(sessions).items) ? payload(sessions).items : [], societies: Array.isArray(payload(societies).items) ? payload(societies).items : [] }; };
+export const listBudgets = async (academicSession) => { const result = payload(await apiClient.get("/society-budgets", { params: { academicSession, limit: 100 } })); return Array.isArray(result.items) ? result.items : []; };
+export const createBudget = async (body) => payload(await apiClient.post("/society-budgets", body)).budget;
+export const setAllocation = async (id, body) => payload(await apiClient.put(`/society-budgets/${id}/allocation`, body)).budget;
+export const downloadTemplate = async () => { const response = await apiClient.get("/society-budgets/import/template", { responseType: "blob" }), url = URL.createObjectURL(response.data), link = document.createElement("a"); link.href = url; link.download = "Annual-Budget-Import-Template.xlsx"; link.click(); URL.revokeObjectURL(url); };
+export const previewImport = async (file) => { const form = new FormData(); form.append("file", file); return payload(await apiClient.post("/society-budgets/import/preview", form)); };
+export const confirmImport = async (id) => payload(await apiClient.post(`/society-budgets/import/${id}/confirm`));
+export const listTransactions = async (id) => payload(await apiClient.get(`/society-budgets/${id}/transactions`));

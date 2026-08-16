@@ -1,0 +1,11 @@
+const mongoose = require("mongoose");
+const { attachPublicId } = require("../publicIds/publicId.service");
+const { STATUSES, SOURCES } = require("./societyMembership.constants");
+const schema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true }, studentMasterId: { type: mongoose.Schema.Types.ObjectId, ref: "StudentMaster", required: true, index: true }, societyId: { type: mongoose.Schema.Types.ObjectId, ref: "Society", required: true, index: true }, roleId: { type: mongoose.Schema.Types.ObjectId, ref: "Role", required: true, index: true }, roleCode: String, roleName: String,
+  academicSessionId: { type: mongoose.Schema.Types.ObjectId, ref: "AcademicSession", index: true }, academicSession: { type: String, index: true },
+  startDate: { type: Date, required: true }, endDate: Date, isOngoing: { type: Boolean, default: true }, status: { type: String, enum: Object.values(STATUSES), default: STATUSES.ACTIVE }, membershipSource: { type: String, enum: Object.values(SOURCES), required: true }, linkedUserRoleAssignmentId: { type: mongoose.Schema.Types.ObjectId, ref: "UserRoleAssignment", index: true }, linkedOnboardingClaimId: { type: mongoose.Schema.Types.ObjectId, ref: "SocietyClaim" }, linkedMembershipRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "MembershipRequest" }, endReasonCode: String, endReasonText: { type: String, maxlength: 1000 }, endRemarks: { type: String, maxlength: 2000 }, endedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, endedAt: Date, appreciationMessage: { type: String, maxlength: 2000 }, metadata: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
+}, { timestamps: true, optimisticConcurrency: true });
+schema.index({ userId: 1, status: 1 }); schema.index({ societyId: 1, status: 1 }); schema.index({ roleId: 1, status: 1 }); schema.index({ societyId: 1, academicSession: 1, status: 1 }); schema.index({ societyId: 1, academicSessionId: 1, status: 1 }); schema.index({ studentMasterId: 1, societyId: 1 }); schema.index({ linkedOnboardingClaimId: 1 }, { unique: true, sparse: true }); schema.index({ userId: 1, societyId: 1 }, { unique: true, partialFilterExpression: { status: "ACTIVE" } });
+attachPublicId(schema, "MEMBERSHIP");
+module.exports = mongoose.model("SocietyMembership", schema);

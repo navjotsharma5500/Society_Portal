@@ -16,7 +16,7 @@ const findAll = async (filter, page, limit) => {
   ]);
   return { items, totalItems };
 };
-const updateMatching = (filter, update, session) => SocietyBudget.findOneAndUpdate(filter, update, { new: true, runValidators: true, ...(session ? { session } : {}) });
+const updateMatching = (filter, update, session) => SocietyBudget.findOneAndUpdate(filter, update, { returnDocument: "after", runValidators: true, ...(session ? { session } : {}) });
 const findTransactions = async (filter, page, limit) => {
   const skip = (page - 1) * limit;
   const [items, totalItems] = await Promise.all([

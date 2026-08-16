@@ -9,7 +9,7 @@ const {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const BODY_FIELDS = [
-  "societyId", "role", "name", "email", "contactNumber", "designation", "department",
+  "userId", "societyId", "role", "name", "email", "contactNumber", "designation", "department",
   "academicSession", "startDate", "endDate", "isOngoing", "status", "notificationEnabled",
   "metadata", "createdBy", "updatedBy",
 ];
@@ -47,7 +47,8 @@ const validateObjectId = (value, field, code) => {
 
 const validateData = (data) => {
   if (data.societyId !== undefined) validateObjectId(data.societyId, "society ID", "INVALID_SOCIETY_ID");
-  if (data.role !== undefined && !Object.values(LEADERSHIP_ROLES).includes(data.role)) throw error("Invalid leadership role", "INVALID_LEADERSHIP_ROLE");
+  if (data.userId !== undefined) validateObjectId(data.userId, "user ID", "INVALID_USER_ID");
+  if (data.role !== undefined && !/^[A-Z0-9][A-Z0-9_-]*$/.test(data.role)) throw error("Invalid leadership role", "INVALID_LEADERSHIP_ROLE");
   if (data.name !== undefined && (data.name.length < 2 || data.name.length > 150)) throw error("name must be between 2 and 150 characters");
   if (data.email !== undefined && !EMAIL_PATTERN.test(data.email)) throw error("email must be valid");
   for (const [field, max] of [["contactNumber", 20], ["designation", 200], ["department", 200]]) {
@@ -65,7 +66,8 @@ const validateData = (data) => {
 const validateCreate = (req, res, next) => {
   try {
     const data = normalize(req.body || {});
-    for (const field of ["societyId", "role", "name", "email", "academicSession"]) if (!data[field]) throw error(`${field} is required`);
+    for (const field of ["societyId", "role", "academicSession"]) if (!data[field]) throw error(`${field} is required`);
+    if (!data.userId && (!data.name || !data.email)) throw error("userId or legacy name/email identity is required");
     validateData(data);
     req.body = data;
     next();
@@ -116,7 +118,7 @@ const validateList = (req, res, next) => {
     const filters = { page, limit };
     for (const field of ["societyId", "role", "academicSession", "status", "email", "search"]) if (req.query[field] !== undefined) filters[field] = req.query[field].trim();
     if (filters.societyId) validateObjectId(filters.societyId, "society ID", "INVALID_SOCIETY_ID");
-    if (filters.role) { filters.role = filters.role.toUpperCase(); if (!Object.values(LEADERSHIP_ROLES).includes(filters.role)) throw error("Invalid leadership role", "INVALID_LEADERSHIP_ROLE"); }
+    if (filters.role) { filters.role = filters.role.toUpperCase(); if (!/^[A-Z0-9][A-Z0-9_-]*$/.test(filters.role)) throw error("Invalid leadership role", "INVALID_LEADERSHIP_ROLE"); }
     if (filters.academicSession && !ACADEMIC_SESSION_PATTERN.test(filters.academicSession)) throw error("academicSession must use YYYY-YY format", "INVALID_ACADEMIC_SESSION");
     if (filters.status) { filters.status = filters.status.toUpperCase(); if (!Object.values(LEADERSHIP_STATUSES).includes(filters.status)) throw error("Invalid leadership status"); }
     if (filters.email) filters.email = filters.email.toLowerCase();

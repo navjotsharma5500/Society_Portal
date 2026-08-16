@@ -1,15 +1,16 @@
-const express = require("express");
-const controller = require("./societyBudget.controller");
-const validation = require("./societyBudget.validation");
-const router = express.Router();
-
-router.route("/").post(validation.validateCreate, controller.create).get(validation.validateList, controller.list);
-router.get("/summary", validation.validateSummary, controller.summary);
-router.get("/society/:societyId/current", validation.validateCurrent, controller.current);
-router.post("/:budgetId/adjust", validation.validateAdjustment, controller.adjust);
-router.post("/:budgetId/manual-adjustment", validation.validateManual, controller.manualAdjustment);
-router.patch("/:budgetId/close", validation.validateClose, controller.close);
-router.get("/:budgetId/transactions", validation.validateTransactions, controller.transactions);
-router.get("/:budgetId", controller.getOne);
-
+const express = require("express"), controller = require("./societyBudget.controller"), validation = require("./societyBudget.validation"), importValidation = require("./societyBudgetImport.validation");
+const { authenticateSession } = require("../auth/auth.middleware"), { requirePermission } = require("../authorization/authorization.middleware");
+const router = express.Router(); router.use(authenticateSession);
+router.get("/import/template", requirePermission("budget.import"), controller.template);
+router.post("/import/preview", requirePermission("budget.import"), importValidation.uploadExcel, controller.previewImport);
+router.post("/import/:importSessionId/confirm", requirePermission("budget.import"), importValidation.sessionId, controller.confirmImport);
+router.route("/").post(requirePermission("budget.allocate"), validation.validateCreate, controller.create).get(requirePermission("budget.view"), validation.validateList, controller.list);
+router.get("/summary", requirePermission("budget.view"), validation.validateSummary, controller.summary);
+router.get("/society/:societyId/current", requirePermission("budget.view"), validation.validateCurrent, controller.current);
+router.post("/:budgetId/adjust", requirePermission("budget.adjust"), validation.validateAdjustment, controller.adjust);
+router.put("/:budgetId/allocation", requirePermission("budget.adjust"), validation.validateSetAllocation, controller.setAllocation);
+router.post("/:budgetId/manual-adjustment", requirePermission("budget.adjust"), validation.validateManual, controller.manualAdjustment);
+router.patch("/:budgetId/close", requirePermission("budget.adjust"), validation.validateClose, controller.close);
+router.get("/:budgetId/transactions", requirePermission("budget.view"), validation.validateTransactions, controller.transactions);
+router.get("/:budgetId", requirePermission("budget.view"), controller.getOne);
 module.exports = router;

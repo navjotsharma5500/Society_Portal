@@ -1,0 +1,10 @@
+const router = require("express").Router();
+const multer = require("multer");
+const { authenticateSession } = require("../auth/auth.middleware");
+const service = require("./profile.service");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 } });
+router.use(authenticateSession);
+router.get("/me", async (req, res) => { const startedAt = require("../../common/performance/performance").now(); const profile = await service.getOwnProfile(req.auth.userId); require("../../common/performance/performance").mark(req, "profileQueryMs", startedAt); res.json({ success: true, data: { profile } }); });
+router.patch("/me", async (req, res) => res.json({ success: true, data: { profile: await service.updateSocialLinks(req.auth.userId, { githubUrl: req.body?.githubUrl, linkedinUrl: req.body?.linkedinUrl }) } }));
+router.post("/me/photo", upload.single("photo"), async (req, res) => res.json({ success: true, data: await service.updatePhoto(req.auth.userId, req.file) }));
+module.exports = router;

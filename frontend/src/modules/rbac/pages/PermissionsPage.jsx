@@ -1,0 +1,20 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Badge, Button, Card, EmptyState, PageHeader, SearchBox, Select, Skeleton, StatusChip } from "../../../design-system";
+import { confirmPermissionSync, listPermissions, previewPermissionSync } from "../services/rbacApi";
+import { useCapability } from "../hooks/useCapability";
+
+export default function PermissionsPage() {
+  const can = useCapability(), [items, setItems] = useState([]), [filters, setFilters] = useState({ search: "", module: "", status: "" }), [sync, setSync] = useState(null), [loading, setLoading] = useState(true), [syncing, setSyncing] = useState(false), [error, setError] = useState("");
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems((await listPermissions({ limit: 100 })).items); } catch (e) { setError(e.readableMessage); } finally { setLoading(false); } }, []);
+  useEffect(() => { load(); }, [load]);
+  const modules = [...new Set(items.map((item) => item.module))];
+  const shown = useMemo(() => items.filter((permission) => (!filters.search || `${permission.code} ${permission.name} ${permission.resource}`.toLowerCase().includes(filters.search.toLowerCase())) && (!filters.module || permission.module === filters.module) && (!filters.status || permission.status === filters.status)), [items, filters]);
+  const preview = async () => { setSyncing(true); setError(""); try { setSync(await previewPermissionSync()); } catch (e) { setError(e.readableMessage); } finally { setSyncing(false); } };
+  const confirm = async () => { setSyncing(true); setError(""); try { const result = await confirmPermissionSync(); setSync(result.preview); await load(); } catch (e) { setError(e.readableMessage); } finally { setSyncing(false); } };
+  return <div className="page-stack rbac-page"><PageHeader title="Permission Catalog" description="Version-controlled business capabilities registered across portal modules." actions={can("permission.sync") && <Button icon={RefreshCw} variant="outline" loading={syncing} onClick={preview}>Sync Permissions</Button>} />
+    {sync && <Card title="Permission Sync Preview" description="Preview is read-only. Legacy permissions are retained for review."><div className="permission-sync-summary"><span><b>{sync.missing.length}</b> New permissions</span><span><b>{sync.existingCount}</b> Existing permissions</span><span><b>{sync.legacy.length}</b> Legacy/unregistered</span></div>{sync.missing.length > 0 && <Button loading={syncing} onClick={confirm}>Sync Missing Permissions</Button>}{sync.legacy.length > 0 && <details><summary>Review legacy permissions</summary><div className="rbac-chips">{sync.legacy.map((permission) => <code key={permission.code}>{permission.code}</code>)}</div></details>}</Card>}
+    <div className="rbac-filters rbac-filters--small"><SearchBox value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} /><Select label="Module" value={filters.module} onChange={(event) => setFilters((current) => ({ ...current, module: event.target.value }))} options={[{ value: "", label: "All modules" }, ...modules]} /><Select label="Status" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))} options={[{ value: "", label: "All statuses" }, "ACTIVE", "INACTIVE", "DEPRECATED"]} /></div>
+    {loading ? <Skeleton lines={9} /> : error && !items.length ? <EmptyState title="Permissions unavailable" description={error} action={<Button onClick={load}>Retry</Button>} /> : <div className="rbac-table-wrap"><table><thead><tr><th>Permission Code</th><th>Display Name</th><th>Module</th><th>Resource</th><th>Action</th><th>Status</th></tr></thead><tbody>{shown.map((permission) => <tr key={permission._id}><td><code>{permission.code}</code></td><td>{permission.name}</td><td><Badge tone="info">{permission.module}</Badge></td><td>{permission.resource}</td><td>{permission.action}</td><td><StatusChip status={permission.status} /></td></tr>)}</tbody></table></div>}
+  </div>;
+}

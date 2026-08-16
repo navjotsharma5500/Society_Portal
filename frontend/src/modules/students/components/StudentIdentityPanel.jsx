@@ -1,0 +1,4 @@
+import {Avatar,Card,StatusChip} from '../../../design-system'
+import {display} from '../utils/studentFormatters'
+import {resolveProfilePicture} from '../../../utils/profilePicture'
+export default function StudentIdentityPanel({student,user}){return <Card><div className="student-detail-identity"><Avatar name={student.name} src={resolveProfilePicture(user,student)} size="lg"/><div><h2>{student.name}</h2><p>{student.email}</p><div><StatusChip status={student.recordStatus}/><StatusChip status={student.isLoginAllowed?'Active':'Inactive'}/></div></div></div><dl className="student-detail-grid">{[['Roll Number',student.rollNumber],['Contact',student.contactNumber],['Signup Status',student.signupStatus],['Profile Status',student.profileStatus],['Linked User',user?.status||'Linked user details are not included in this response.']].map(([k,v])=><div key={k}><dt>{k}</dt><dd>{display(v)}</dd></div>)}</dl></Card>}

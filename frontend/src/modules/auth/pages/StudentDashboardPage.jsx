@@ -1,0 +1,6 @@
+import {ArrowRight,Building2,UsersRound} from 'lucide-react'
+import {useNavigate} from 'react-router-dom'
+import {Button,Card,PageContainer,PageHeader,StatusChip} from '../../../design-system'
+import {useAuth} from '../hooks/useAuth'
+import '../student-auth.css'
+export default function StudentDashboardPage(){const auth=useAuth(),navigate=useNavigate(),hour=new Date().getHours(),greeting=hour<12?'Good morning':hour<17?'Good afternoon':'Good evening',contexts=auth.activeSocietyContexts||[];return <main className="student-placeholder"><PageContainer><PageHeader eyebrow="Campus Connect" title={`${greeting}, ${auth.user?.displayName||'Student'}`} description="Manage your society participation and campus activities."/>{contexts.length?<div className="society-stat-grid">{contexts.map(c=><Card key={`${c.societyId}-${c.roleId}`} title={c.societyName} actions={<StatusChip status="ACTIVE"/>}><p><UsersRound size={16}/> {c.roleName}</p><small>{c.societyCode}</small></Card>)}</div>:<Card title="Start your society journey"><Building2/><p>You do not have an active ongoing society membership yet.</p><Button icon={ArrowRight} disabled={!auth.membership?.joinSocietyAvailable} onClick={()=>navigate('/student/onboarding')}>Join a Society</Button></Card>}</PageContainer></main>}

@@ -4,6 +4,10 @@ const repo = require("./studentMaster.repository");
 const userRepo = require("../users/user.repository");
 const { ACCOUNT_TYPES, USER_STATUSES } = require("../users/user.constants");
 const { RECORD_STATUSES } = require("./studentMaster.constants");
+const sessionService = require("../auth/session.service");
+const domainEvents = require("../../common/events/domainEvent.service");
+const User = require("../users/user.model");
+const { resolveProfilePicture } = require("../identity/profilePicture");
 const valid = (id) =>
   mongoose.Types.ObjectId.isValid(id) && /^[a-f\d]{24}$/i.test(String(id));
 const supports = () => {
@@ -24,23 +28,27 @@ const atomic = async (fn) => {
   }
 };
 const duplicate = async (data) => {
+  const resolution = (await require("../identity/identityResolution.service").batchResolve([data]))[0];
+  if (resolution.classification !== "VALID") { const error = new AppError("The user already exists in the portal.", 409, resolution.classification === "IDENTITY_CONFLICT" ? "IDENTITY_CONFLICT" : "USER_ALREADY_EXISTS"); error.reference = resolution.existing; throw error; }
   if (await repo.findByEmail(data.email))
     throw new AppError(
       "Student email already exists",
       409,
-      "STUDENT_EMAIL_EXISTS",
+      "STUDENT_EMAIL_EXISTS"
     );
   if (data.rollNumber && (await repo.findByRollNumber(data.rollNumber)))
     throw new AppError(
       "Student roll number already exists",
       409,
-      "STUDENT_ROLL_NUMBER_EXISTS",
+      "STUDENT_ROLL_NUMBER_EXISTS"
     );
   if (await userRepo.findByEmail(data.email))
     throw new AppError("User email already exists", 409, "USER_EMAIL_EXISTS");
 };
-const createStudent = async (data) => {
-  await duplicate(data);
+const createStudent = async (data, options = {}) => {
+  const normalization = require("../identity/identityNormalization");
+  data = { ...data, email: normalization.normalizeEmail(data.email), rollNumber: normalization.normalizeRollNumber(data.rollNumber) || undefined, contactNumber: String(data.contactNumber || "").trim(), normalizedContact: normalization.normalizeContact(data.contactNumber) || undefined };
+  if (!options.prevalidated) await duplicate(data);
   try {
     return await atomic(async (session) => {
       const student = await repo.create(data, session);
@@ -56,7 +64,7 @@ const createStudent = async (data) => {
             isLoginAllowed: student.isLoginAllowed,
             createdBy: data.createdBy,
           },
-          session,
+          session
         );
       } catch (e) {
         if (!session)
@@ -75,13 +83,9 @@ const createStudent = async (data) => {
         throw new AppError(
           "Student roll number already exists",
           409,
-          "STUDENT_ROLL_NUMBER_EXISTS",
+          "STUDENT_ROLL_NUMBER_EXISTS"
         );
-      throw new AppError(
-        "Student or user email already exists",
-        409,
-        "STUDENT_EMAIL_EXISTS",
-      );
+      throw new AppError("The user already exists in the portal.", 409, "USER_ALREADY_EXISTS");
     }
     throw e;
   }
@@ -117,8 +121,10 @@ const listStudents = async (f) => {
   if (typeof f.isLoginAllowed === "boolean")
     q.isLoginAllowed = f.isLoginAllowed;
   const { items, totalItems } = await repo.findAll(q, f.page, f.limit);
+  const linkedUsers=await User.find({studentMasterId:{$in:items.map(item=>item._id)}}).select("studentMasterId profilePictureUrl profilePhotoUrl").lean(),byStudent=new Map(linkedUsers.map(user=>[String(user.studentMasterId),user]));
+  const projected=items.map(item=>{const value=item.toObject?item.toObject():item,user=byStudent.get(String(value._id));return{...value,profilePictureUrl:resolveProfilePicture(user,value)};});
   return {
-    items,
+    items: projected,
     pagination: {
       page: f.page,
       limit: f.limit,
@@ -145,7 +151,7 @@ const updateStudent = async (id, data) => {
     throw new AppError(
       "Student email cannot be changed",
       400,
-      "VALIDATION_ERROR",
+      "VALIDATION_ERROR"
     );
   if (
     data.rollNumber &&
@@ -155,12 +161,18 @@ const updateStudent = async (id, data) => {
     throw new AppError(
       "Student roll number already exists",
       409,
-      "STUDENT_ROLL_NUMBER_EXISTS",
+      "STUDENT_ROLL_NUMBER_EXISTS"
     );
-  return repo.updateById(id, data);
+  const student = await repo.updateById(id, data);
+  if (data.profileStatus === "APPROVED" && old.profileStatus !== "APPROVED") {
+    const user = await userRepo.findByStudentId(id);
+    domainEvents.publish("PROFILE_APPROVED_LOGIN_AVAILABLE", { userId: user?._id, studentMasterId: id });
+  }
+  return student;
 };
-const updateLoginAccess = async (id, data) =>
-  atomic(async (session) => {
+const updateLoginAccess = async (id, data) => {
+  let linkedUser;
+  const student = await atomic(async (session) => {
     const s = await getStudent(id);
     const student = await repo.updateById(
       s._id,
@@ -168,22 +180,26 @@ const updateLoginAccess = async (id, data) =>
         isLoginAllowed: data.isLoginAllowed,
         "metadata.loginAccessReason": data.reason,
       },
-      session,
+      session
     );
-    const user = await userRepo.findByStudentId(s._id);
-    if (user)
+    linkedUser = await userRepo.findByStudentId(s._id);
+    if (linkedUser)
       await userRepo.updateById(
-        user._id,
+        linkedUser._id,
         {
           isLoginAllowed: data.isLoginAllowed,
           "metadata.loginAccessReason": data.reason,
         },
-        session,
+        session
       );
     return student;
   });
-const updateRecordStatus = async (id, data) =>
-  atomic(async (session) => {
+  if (!data.isLoginAllowed && linkedUser) await sessionService.revokeAllForUser(linkedUser._id, "LOGIN_ACCESS_DISABLED");
+  return student;
+};
+const updateRecordStatus = async (id, data) => {
+  let linkedUser;
+  const student = await atomic(async (session) => {
     const s = await getStudent(id);
     const disable = data.recordStatus !== RECORD_STATUSES.ACTIVE;
     const student = await repo.updateById(
@@ -193,21 +209,25 @@ const updateRecordStatus = async (id, data) =>
         "metadata.recordStatusReason": data.reason,
         ...(disable ? { isLoginAllowed: false } : {}),
       },
-      session,
+      session
     );
-    const user = await userRepo.findByStudentId(s._id);
-    if (user && disable)
+    linkedUser = await userRepo.findByStudentId(s._id);
+    if (linkedUser && disable)
       await userRepo.updateById(
-        user._id,
+        linkedUser._id,
         {
           isLoginAllowed: false,
           status: USER_STATUSES.INACTIVE,
           "metadata.recordStatusReason": data.reason,
         },
-        session,
+        session
       );
     return student;
   });
+  if (data.recordStatus !== RECORD_STATUSES.ACTIVE && linkedUser)
+    await sessionService.revokeAllForUser(linkedUser._id, "STUDENT_RECORD_INACTIVE");
+  return student;
+};
 module.exports = {
   createStudent,
   getStudent,

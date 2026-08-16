@@ -1,0 +1,45 @@
+.session-semester-fields {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-sm);
+}
+
+.session-semester-fields legend {
+  padding: 0 0.25rem;
+  color: var(--cc-muted);
+  font-size: 0.85rem;
+}
+
+.session-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--cc-background);
+  color: var(--cc-muted);
+  font-size: 0.75rem;
+}
+
+.session-badge.current {
+  background: var(--cc-primary);
+  color: #fff;
+}
+
+.rollover-panel { margin-top: 1rem; }
+.rollover-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.rollover-heading h3, .rollover-heading p { margin: 0.2rem 0; }
+.rollover-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.65rem; margin: 1rem 0; }
+.rollover-summary span { padding: 0.75rem; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-sm); background: var(--cc-background); }
+.rollover-summary small, .rollover-summary strong, .rollover-table td small { display: block; }
+.rollover-summary strong { color: var(--cc-primary); font-size: 1.25rem; }
+.rollover-table { margin-top: 1rem; overflow-x: auto; }
+.rollover-table table { width: 100%; border-collapse: collapse; }
+.rollover-table th, .rollover-table td { padding: 0.65rem; border-bottom: 1px solid var(--cc-border); text-align: left; vertical-align: top; }
+.rollover-table td small { color: var(--cc-muted); margin-top: 0.2rem; }
+.rollover-history { margin-top: 1rem; }
+.rollover-history summary { color: var(--cc-primary); font-weight: 700; cursor: pointer; }
+@media (max-width: 640px) { .rollover-heading > button, .rollover-preview .master-actions button { width: 100%; } }

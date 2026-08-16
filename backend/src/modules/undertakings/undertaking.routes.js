@@ -1,0 +1,12 @@
+const router=require('express').Router(),controller=require('./undertaking.controller'),validation=require('./undertaking.validation'),{authenticateSession}=require('../auth/auth.middleware'),{requirePermission}=require('../authorization/authorization.middleware')
+router.use(authenticateSession)
+router.get('/required',controller.required)
+router.get('/me/acceptances',controller.mine)
+router.post('/:undertakingId/accept',validation.accept,controller.accept)
+router.post('/',requirePermission('undertaking.create'),validation.body,controller.create)
+router.get('/',requirePermission('undertaking.page.view'),controller.list)
+router.get('/:undertakingId',requirePermission('undertaking.page.view'),controller.get)
+router.patch('/:undertakingId',requirePermission('undertaking.edit'),validation.patch,controller.update)
+router.post('/:undertakingId/activate',requirePermission('undertaking.activate'),controller.activate)
+router.post('/:undertakingId/deactivate',requirePermission('undertaking.deactivate'),controller.deactivate)
+module.exports=router

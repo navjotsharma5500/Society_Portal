@@ -2,7 +2,6 @@ const ExcelJS = require("exceljs");
 const AppError = require("../../common/errors/AppError");
 const Society = require("../societies/society.model");
 const societyService = require("../societies/society.service");
-const { createLeadershipFromImportPreview } = require("../societyLeadership/societyLeadership.service");
 const { prepareSocietyCode, isValidSocietyCode } = require("../societies/societyCode.service");
 const Session = require("./models/societyImportSession.model");
 const {
@@ -115,6 +114,7 @@ const parseWorkbookRows = async (buffer, requestSession) => {
     rawRows.push({
       rowNumber, name, suppliedCode: cleanText(at("code")), officialEmail: cleanEmail(at("officialEmail")),
       entityType, campus, suppliedCategory: cleanText(at("category")), presidentPreview: president,
+      legacyLeadershipColumnsPresent: headers.president !== undefined || headers.presidentEmail !== undefined || headers.presidentDesignation !== undefined,
       academicSession: cleanText(at("academicSession")) || requestSession,
       active: cleanText(at("active")), sectionRecognized: Boolean(section) || headers.entityType !== undefined,
     });
@@ -149,10 +149,8 @@ const normalizeAndValidateRows = async (rawRows) => {
     if (raw.suppliedCode && !suppliedWasValid) warnings.push("INVALID_CODE_REGENERATED");
     if (!raw.officialEmail) warnings.push("SOCIETY_EMAIL_MISSING");
     else if (!EMAIL_PATTERN.test(raw.officialEmail)) warnings.push("SOCIETY_EMAIL_INVALID");
-    if (!raw.presidentPreview.name) warnings.push("PRESIDENT_NAME_MISSING");
-    if (!raw.presidentPreview.email) warnings.push("PRESIDENT_EMAIL_MISSING");
-    else if (!EMAIL_PATTERN.test(raw.presidentPreview.email)) warnings.push("PRESIDENT_EMAIL_INVALID");
-    if (![raw.name, code, raw.entityType, raw.campus, category, raw.academicSession].every(Boolean)) errors.push("REQUIRED_FIELD_MISSING");
+    if (raw.legacyLeadershipColumnsPresent) warnings.push("DEPRECATED_LEADERSHIP_COLUMNS_IGNORED");
+    if (![raw.name, code, raw.entityType, raw.campus, category].every(Boolean)) errors.push("REQUIRED_FIELD_MISSING");
 
     const nameCampusKey = `${normalizeName(raw.name)}|${raw.campus}`;
     const emailCampusKey = raw.officialEmail ? `${raw.officialEmail}|${raw.campus}` : null;
@@ -177,7 +175,7 @@ const normalizeAndValidateRows = async (rawRows) => {
     rows.push({
       rowNumber: raw.rowNumber, name: raw.name, code, officialEmail: raw.officialEmail,
       entityType: raw.entityType, campus: raw.campus, category,
-      presidentPreview: raw.presidentPreview, academicSession: raw.academicSession,
+      academicSession: raw.academicSession,
       status: "ACTIVE", isActive: true, warnings: [...new Set(warnings)],
       errors: [...new Set(errors)], action, importable,
     });
@@ -239,7 +237,7 @@ const confirmImport = async (id) => {
   let session = await Session.findOneAndUpdate(
     { _id: id, expiresAt: { $gt: new Date() }, status: IMPORT_STATUSES.PREVIEWED },
     { $set: { status: IMPORT_STATUSES.FAILED } },
-    { new: true }
+    { returnDocument: "after" }
   );
   if (!session) {
     session = await findActiveSession(id);
@@ -301,17 +299,11 @@ const confirmImport = async (id) => {
           importSource: "SOCIETY_EXCEL",
           sourceRowNumber: row.rowNumber,
         },
-      });
+      }, { skipCacheInvalidation: true });
       result.societyId = society.id;
       result.societyStatus = "CREATED";
-      const leadership = await createLeadershipFromImportPreview({
-        societyId: society.id,
-        presidentPreview: row.presidentPreview,
-        academicSession: row.academicSession,
-      });
-      result.leadershipStatus = leadership.status;
-      result.leadershipReason = leadership.reason || null;
-      if (leadership.status === "FAILED" && leadership.error) result.errors.push(leadership.error);
+      result.leadershipStatus = "NOT_APPLICABLE";
+      result.leadershipReason = "ASSIGN_TEAM_THROUGH_CANONICAL_ROLE_WORKFLOW";
     } catch (error) {
       if (error.code === "SOCIETY_CODE_EXISTS" || error.code === 11000) {
         result.societyStatus = "SKIPPED";
@@ -347,6 +339,7 @@ const confirmImport = async (id) => {
   session.importSummary = summary;
   session.importResults = results;
   await session.save();
+  await require("../../cache/cacheInvalidation").societies();
   return { importSessionId: session.id, summary, results };
 };
 

@@ -1,0 +1,2 @@
+const steps=['Your Details & Undertaking','Society Journey','Review','Submit']
+export default function OnboardingStepper({current,onSelect}){return <nav className="onboarding-stepper" aria-label="Onboarding progress">{steps.map((label,index)=>{const number=index+1;return <button key={label} className={`${number===current?'active':''} ${number<current?'complete':''}`} onClick={()=>number<current&&onSelect(number)} aria-current={number===current?'step':undefined}><i>{number<current?'✓':number}</i><span>{label}</span></button>})}</nav>}
