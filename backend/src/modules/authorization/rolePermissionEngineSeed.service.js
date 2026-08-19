@@ -20,6 +20,10 @@ const presets = {
     "notification.",
     "verification.",
   ],
+  // Assistant no longer participates in Event approval — the live routing is now
+  // FACULTY_REVIEW (PRESIDENT) -> DOSA_STAFF_REVIEW -> ADOSA_REVIEW -> DOSA_REVIEW. The Assistant
+  // role itself, its login, dashboard shell, and all non-Event permissions are unaffected; this
+  // preset only drops the Event review/approval permission codes.
   ASSISTANT: [
     "dashboard.admin.view",
     "society.page.view",
@@ -29,12 +33,6 @@ const presets = {
     "profile.verification.",
     "notification.",
     "verification.",
-    "event.approval.",
-    "event.review.queue.view",
-    "event.review.view",
-    "event.review.forward",
-    "event.review.request_changes",
-    "event.review.reject",
   ],
   PRESIDENT: [
     "dashboard.admin.view",

@@ -40,7 +40,6 @@ export default function SocietyAdminEventsPage() {
             options={[
               { value: "", label: "All statuses" },
               "FACULTY_REVIEW",
-              "ASSISTANT_REVIEW",
               "DOSA_STAFF_REVIEW",
               "ADOSA_REVIEW",
               "DOSA_REVIEW",

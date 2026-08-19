@@ -452,9 +452,12 @@ export function EventPlanningSection({ form, set, budgetOnly = false }) {
 export function EventGovernanceSection({ event }) {
   const review = event?.facultyReviewContext || {};
   const names = review.presidentNames || [];
+  // New Events (and every new/resubmitted attempt) always route FACULTY_REVIEW -> DOSA_STAFF_REVIEW
+  // -> ADOSA_REVIEW -> DOSA_REVIEW; Assistant no longer participates in Event approval. Historical
+  // attempts that passed through the legacy ASSISTANT_REVIEW stage still keep that record in
+  // reviewHistory / amendmentHistory — it's simply not shown as a step in this live journey.
   const stages = [
     ["FACULTY_REVIEW", "Faculty President Review"],
-    ["ASSISTANT_REVIEW", "Assistant Review"],
     ["DOSA_STAFF_REVIEW", "DoSA Staff Review"],
     ["ADOSA_REVIEW", "ADoSA Review"],
     ["DOSA_REVIEW", "DoSA Final Approval"],

@@ -20,15 +20,36 @@ const {
   describeChanges,
 } = require("./event.constants");
 
+// Assistant is permanently removed from the live Event approval routing. FACULTY_REVIEW now hands
+// straight to DOSA_STAFF_REVIEW. ASSISTANT_REVIEW is intentionally absent from this table — any
+// review still sitting on that legacy stage is unroutable and therefore never actionable again
+// (see isWorkflowStage below), it only remains readable via history().
 const routing = {
-  FACULTY_REVIEW: { role: "PRESIDENT", next: "ASSISTANT_REVIEW" },
-  ASSISTANT_REVIEW: { role: "ASSISTANT", next: "DOSA_STAFF_REVIEW" },
+  FACULTY_REVIEW: { role: "PRESIDENT", next: "DOSA_STAFF_REVIEW" },
   DOSA_STAFF_REVIEW: { role: "DOSA_STAFF", next: "ADOSA_REVIEW" },
   ADOSA_REVIEW: { role: "ADOSA", next: "DOSA_REVIEW" },
   DOSA_REVIEW: { role: "DOSA", next: null },
 };
-const workflowStageValues = Object.freeze(Object.values(WORKFLOW_STAGES));
-const isWorkflowStage = (stage) => workflowStageValues.includes(stage);
+// Active = currently routable stages (what new/live reviews may sit on). All = active + legacy
+// (ASSISTANT_REVIEW), used only where historical records must remain visible.
+const activeStageValues = Object.freeze(Object.keys(routing));
+const allStageValues = Object.freeze(Object.values(WORKFLOW_STAGES));
+const isWorkflowStage = (stage) => activeStageValues.includes(stage);
+const TERMINAL_EVENT_STATUSES = Object.freeze(["APPROVED", "REJECTED", "CANCELLED"]);
+// Marks every other PENDING review for an Event as SUPERSEDED (history-preserving, never deleted).
+// Used (a) whenever a decide() outcome does NOT advance to a fresh next-stage review, so any
+// leftover/duplicate PENDING review from bad prior state can never resurface as actionable, and
+// (b) on Student resubmission, so a stale PENDING review from a superseded attempt can never be
+// confused with the new attempt's FACULTY_REVIEW.
+const supersedePendingReviews = (eventId, { exceptReviewId } = {}) =>
+  Review.updateMany(
+    {
+      eventId,
+      status: "PENDING",
+      ...(exceptReviewId ? { _id: { $ne: exceptReviewId } } : {}),
+    },
+    { $set: { status: "SUPERSEDED" } }
+  );
 const reviewerLabel = (role) =>
   ({ DOSA_STAFF: "DoSA Staff", ADOSA: "ADoSA" }[role] || role.replaceAll("_", " "));
 const amendmentChanges = (event, proposal = {}) => diffFields(event, proposal, amendableFields);
@@ -121,8 +142,10 @@ const assign = async (
   });
   return review;
 };
+// History is an audit trail: it intentionally includes legacy (ASSISTANT_REVIEW) stages so old
+// attempts remain fully readable, even though those stages can never be actionable again.
 const history = (eventId) =>
-  Review.find({ eventId, stage: { $in: workflowStageValues } })
+  Review.find({ eventId, stage: { $in: allStageValues } })
     .sort({ attempt: 1, createdAt: 1 })
     .lean();
 const amendments = async (eventId) => {
@@ -146,7 +169,7 @@ const queue = async (userId, filters = {}) => {
       items: [],
       pagination: { page: 1, limit: 0, totalItems: 0, totalPages: 1 },
     };
-  const query = { assignedReviewerUserIds: userId, stage: { $in: workflowStageValues } };
+  const query = { assignedReviewerUserIds: userId, stage: { $in: activeStageValues } };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   if (filters.view === "forwarded") {
@@ -171,12 +194,25 @@ const queue = async (userId, filters = {}) => {
     })
     .sort({ updatedAt: -1 })
     .lean();
+  let items = rows.filter((x) => x.eventId);
+  // The Pending queue means CURRENT ACTIONABLE ONLY: a PENDING review that belongs to an earlier
+  // attempt, or whose stage no longer matches the Event's live currentStage/status, must never
+  // surface here even if its own status column still (incorrectly) reads PENDING. Enforced
+  // server-side — the frontend must not be relied on to filter this out.
+  if (query.status === "PENDING")
+    items = items.filter(
+      (x) =>
+        x.status === "PENDING" &&
+        x.attempt === x.eventId.revision &&
+        x.stage === x.eventId.currentStage &&
+        x.stage === x.eventId.status
+    );
   return {
-    items: rows.filter((x) => x.eventId),
+    items,
     pagination: {
       page: 1,
-      limit: rows.length,
-      totalItems: rows.filter((x) => x.eventId).length,
+      limit: items.length,
+      totalItems: items.length,
       totalPages: 1,
     },
   };
@@ -193,10 +229,13 @@ const detail = async (userId, eventId) => {
     .lean();
   if (!event || event.status === "DRAFT")
     throw new AppError("Event not found", 404, "EVENT_NOT_FOUND");
+  // Visibility (can this reviewer see the Event at all) intentionally includes legacy stages, so a
+  // reviewer who was historically assigned a now-superseded/legacy review can still read the record
+  // — only activeReview (below) is gated to the current actionable attempt.
   const assigned = await Review.exists({
     eventId,
     assignedReviewerUserIds: userId,
-    stage: { $in: workflowStageValues },
+    stage: { $in: allStageValues },
   });
   const allowed = await authz.hasPermission({
     userId,
@@ -210,10 +249,16 @@ const detail = async (userId, eventId) => {
       "EVENT_PERMISSION_DENIED"
     );
   const reviewHistory = await history(eventId);
+  // activeReview must satisfy the full current-attempt invariant, never just "PENDING and assigned
+  // to me" — otherwise a stale/duplicate PENDING review from an earlier attempt (or a legacy
+  // ASSISTANT_REVIEW row) would surface reviewer action buttons on a historical attempt.
   const activeReview =
     reviewHistory.find(
       (x) =>
         x.status === "PENDING" &&
+        x.attempt === event.revision &&
+        x.stage === event.currentStage &&
+        x.stage === event.status &&
         x.assignedReviewerUserIds.some((id) => String(id) === String(userId))
     ) || null;
   // DoSA Staff alone gets the exact Society budget position while actively reviewing — this is a
@@ -249,7 +294,7 @@ const detail = async (userId, eventId) => {
 const counts = async (userId, societyId) => {
   const match = {
     assignedReviewerUserIds: new mongoose.Types.ObjectId(String(userId)),
-    stage: { $in: workflowStageValues },
+    stage: { $in: activeStageValues },
   };
   const pipeline = [
     { $match: match },
@@ -289,11 +334,24 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
       "EVENT_REVIEW_FORBIDDEN"
     );
   const event = await Event.findById(current.eventId);
-  if (current.stage === "ASSISTANT_REVIEW" && amendment)
+  if (!event) throw new AppError("Event not found", 404, "EVENT_NOT_FOUND");
+  // Mandatory staleness gate — checked before ANY other decision logic, permission check, amendment
+  // application, budget check, or state mutation. A review is only actionable when it is PENDING,
+  // belongs to the Event's current approval attempt, and its stage still matches the Event's live
+  // status/currentStage. This is what makes it impossible for a stale/duplicate review (e.g. the
+  // legacy "DoSA Staff Request Changes + orphaned ADoSA PENDING" bug) to ever mutate an Event again
+  // — including one that has already reached a terminal state (APPROVED/REJECTED/CANCELLED).
+  if (
+    current.status !== "PENDING" ||
+    current.attempt !== event.revision ||
+    event.status !== current.stage ||
+    event.currentStage !== current.stage ||
+    TERMINAL_EVENT_STATUSES.includes(event.status)
+  )
     throw new AppError(
-      "Assistant cannot amend Event proposal data",
-      403,
-      "EVENT_PERMISSION_DENIED"
+      "This review belongs to an earlier Event approval attempt and is no longer actionable.",
+      409,
+      "EVENT_REVIEW_STALE"
     );
   if (decision === "BUDGET_RECTIFICATION" && current.stage !== "DOSA_STAFF_REVIEW")
     throw new AppError(
@@ -528,7 +586,20 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
     userId,
     metadata: { eventId: String(event._id), stage: current.stage },
   });
-  if (next) await assign(event, next, event.revision, nextReviewers);
+  // Root-cause fix: a next-stage review may ONLY be assigned when this decision actually APPROVEd
+  // and a next stage exists. `next` alone is just "what the routing table says comes after this
+  // stage" — it says nothing about what was decided. Gating on `next` alone (the historical bug)
+  // meant REQUEST_CHANGES / REJECT / BUDGET_RECTIFICATION also created a downstream review, so e.g.
+  // a DoSA Staff "Request Changes" sent the Event back to the Student while simultaneously creating
+  // a PENDING ADoSA review against the very attempt that was just rejected.
+  if (decision === "APPROVE" && next) {
+    await assign(event, next, event.revision, nextReviewers);
+  } else {
+    // REQUEST_CHANGES / REJECT / legacy BUDGET_RECTIFICATION (and, defensively, any other
+    // non-advancing outcome) must create ZERO downstream reviews and must leave no other PENDING
+    // review behind for this Event — this is what makes stale duplicate reviews impossible.
+    await supersedePendingReviews(event._id, { exceptReviewId: reviewId });
+  }
   return { review: updated, event, history: await history(event._id) };
 };
 const amend = async ({ userId, reviewId, reason, proposal }) => {
@@ -537,7 +608,7 @@ const amend = async ({ userId, reviewId, reason, proposal }) => {
   const review = await Review.findOne({
     _id: reviewId,
     status: "PENDING",
-    stage: { $in: workflowStageValues },
+    stage: { $in: allStageValues },
   }).lean();
   if (!review)
     throw new AppError(
@@ -553,12 +624,6 @@ const amend = async ({ userId, reviewId, reason, proposal }) => {
       403,
       "EVENT_REVIEW_FORBIDDEN"
     );
-  if (review.stage === "ASSISTANT_REVIEW")
-    throw new AppError(
-      "Assistant cannot amend Event proposal data",
-      403,
-      "EVENT_PERMISSION_DENIED"
-    );
   if (review.stage !== "FACULTY_REVIEW")
     throw new AppError(
       "Assistant amendment is unavailable at this stage",
@@ -568,6 +633,8 @@ const amend = async ({ userId, reviewId, reason, proposal }) => {
   const event = await Event.findOne({
     _id: review.eventId,
     status: review.stage,
+    currentStage: review.stage,
+    revision: review.attempt,
   });
   if (!event)
     throw new AppError(
@@ -672,6 +739,10 @@ const saveBudgetReview = async ({ userId, reviewId, items }) => {
 };
 module.exports = {
   routing,
+  activeStageValues,
+  allStageValues,
+  isWorkflowStage,
+  supersedePendingReviews,
   resolveReviewers,
   assign,
   history,

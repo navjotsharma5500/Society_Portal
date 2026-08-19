@@ -112,13 +112,10 @@ const payload = (societyId, title, date, items) => ({
     let evt = await service.submit(gs.user._id, draft._id);
     assert.equal(evt.status, "FACULTY_REVIEW");
 
-    // 2. President approves
+    // 2. President approves — routes straight to DoSA Staff (Assistant is removed from Event approval)
     let review = await findPending(pres._id, evt._id, "FACULTY_REVIEW");
     await workflow.decide({ userId: pres._id, reviewId: review._id, decision: "APPROVE" });
-    // 3. Assistant approves
-    review = await findPending(assistant._id, evt._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
-    // 4. Event reaches DoSA Staff
+    // 3. Event reaches DoSA Staff
     review = await findPending(dosaStaff._id, evt._id, "DOSA_STAFF_REVIEW");
     assert(review, "Event must reach DOSA_STAFF_REVIEW");
 
@@ -198,8 +195,6 @@ const payload = (societyId, title, date, items) => ({
     let evt2 = await service.submit(gs2.user._id, draft2._id);
     r = await findPending(pres._id, evt2._id, "FACULTY_REVIEW");
     await workflow.decide({ userId: pres._id, reviewId: r._id, decision: "APPROVE" });
-    r = await findPending(assistant._id, evt2._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: r._id, decision: "APPROVE" });
     r = await findPending(dosaStaff._id, evt2._id, "DOSA_STAFF_REVIEW");
     const rectified = await workflow.decide({ userId: dosaStaff._id, reviewId: r._id, decision: "BUDGET_RECTIFICATION", remarks: "Please reconsider the banner cost." });
     assert.equal(rectified.event.status, "BUDGET_RECTIFICATION_REQUIRED");
@@ -208,9 +203,12 @@ const payload = (societyId, title, date, items) => ({
     assert.equal(evt2.status, "FACULTY_REVIEW", "resubmission after rectification must restart at President, not return to DoSA Staff");
     assert.equal(evt2.revision, 2);
 
-    // 26. Admin remains outside the Event Approval workflow
+    // 26. Admin and Assistant remain outside the Event Approval workflow
     assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "ADMIN_REVIEW"));
     assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "SUPER_ADMIN"));
+    assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "ASSISTANT_REVIEW"));
+    assert.equal(await Review.countDocuments({ eventId: { $in: [evt._id, evt2._id] }, stage: "ASSISTANT_REVIEW" }), 0);
+    assert.equal((await workflow.queue(assistant._id, { status: "PENDING" })).items.length, 0, "Assistant must never have a Pending Event review");
 
     console.log(
       JSON.stringify(

@@ -20,6 +20,7 @@
     "verify:undertakings": "node scripts/verify-undertakings.js",
     "verify:events": "node scripts/verify-events.js",
     "verify:event-workflow": "node scripts/verify-event-workflow.js",
+    "reconcile:event-review-state": "node scripts/reconcile-event-review-state.js",
     "verify:settings-budgets": "node scripts/verify-settings-budgets.js",
     "migrate:public-ids": "node scripts/migrate-public-ids.js",
     "verify:master-imports-public-ids": "node scripts/verify-master-imports-public-ids.js",

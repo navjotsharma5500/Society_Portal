@@ -105,9 +105,7 @@ const payload = (societyId, title, date, items) => ({
       let review = await findPending(presidentUser._id, evt._id, "FACULTY_REVIEW");
       await workflow.decide({ userId: presidentUser._id, reviewId: review._id, decision: "APPROVE" });
       if (targetStage === "FACULTY_REVIEW") return { evt };
-      review = await findPending(assistant._id, evt._id, "ASSISTANT_REVIEW");
-      await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
-      if (targetStage === "ASSISTANT_REVIEW") return { evt };
+      // Assistant is removed from Event approval: FACULTY_REVIEW routes straight to DOSA_STAFF_REVIEW.
       review = await findPending(dosaStaff._id, evt._id, "DOSA_STAFF_REVIEW");
       if (targetStage === "DOSA_STAFF_REVIEW") return { evt, review };
       await workflow.saveBudgetReview({ userId: dosaStaff._id, reviewId: review._id, items: [{ recommendedAmount: 1800, reviewRemark: "Trimmed" }] });
@@ -149,9 +147,7 @@ const payload = (societyId, title, date, items) => ({
     assert.equal(await Review.countDocuments({ eventId: evtB._id, status: "PENDING" }), 1, "only one active pending review may exist");
     // Finish attempt 2 through to final approval (normal full path must still work end-to-end).
     await workflow.decide({ userId: presB._id, reviewId: freshReview._id, decision: "APPROVE" });
-    let r = await findPending(assistant._id, evtB._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: r._id, decision: "APPROVE" });
-    r = await findPending(dosaStaff._id, evtB._id, "DOSA_STAFF_REVIEW");
+    let r = await findPending(dosaStaff._id, evtB._id, "DOSA_STAFF_REVIEW");
     assert.equal((await Event.findById(evtB._id)).budget.items[0].recommendedAmount, undefined, "DoSA Staff must review the budget again on the fresh attempt");
     await workflow.saveBudgetReview({ userId: dosaStaff._id, reviewId: r._id, items: [{ recommendedAmount: 1800, reviewRemark: "Trimmed again" }] });
     await workflow.decide({ userId: dosaStaff._id, reviewId: r._id, decision: "APPROVE" });
@@ -182,8 +178,6 @@ const payload = (societyId, title, date, items) => ({
     // Full chain again, ending APPROVED.
     r = await findPending(presC._id, evtC._id, "FACULTY_REVIEW");
     await workflow.decide({ userId: presC._id, reviewId: r._id, decision: "APPROVE" });
-    r = await findPending(assistant._id, evtC._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: r._id, decision: "APPROVE" });
     r = await findPending(dosaStaff._id, evtC._id, "DOSA_STAFF_REVIEW");
     await workflow.saveBudgetReview({ userId: dosaStaff._id, reviewId: r._id, items: [{ recommendedAmount: 1900, reviewRemark: "OK" }] });
     await workflow.decide({ userId: dosaStaff._id, reviewId: r._id, decision: "APPROVE" });
@@ -227,11 +221,15 @@ const payload = (societyId, title, date, items) => ({
       (error) => error.statusCode === 403 || error.statusCode === 404
     );
 
-    // ============ No reservation logic; Admin remains outside ============
+    // ============ No reservation logic; Admin and Assistant remain outside ============
     const finalBudgetB = await budgets.getBudget((await SocietyBudget.findOne({ societyId: socB._id }))._id);
     assert.equal(finalBudgetB.reservedAmount, 0);
     assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "ADMIN_REVIEW"));
     assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "SUPER_ADMIN"));
+    assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "ASSISTANT_REVIEW"));
+    for (const evt of [evtB, evtC, evtD])
+      assert.equal(await Review.countDocuments({ eventId: evt._id, stage: "ASSISTANT_REVIEW" }), 0, "ASSISTANT_REVIEW must never be created for a new Event or resubmission attempt");
+    assert.equal((await workflow.queue(assistant._id, { status: "PENDING" })).items.length, 0, "Assistant must never have a Pending Event review");
 
     console.log(
       JSON.stringify(

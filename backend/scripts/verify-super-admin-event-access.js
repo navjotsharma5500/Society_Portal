@@ -103,7 +103,7 @@ const ids = { users: [], students: [], societies: [] };
 
     // === 9/10. Super Admin gains no approve/reject workflow role; routing unchanged ===
     assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "SUPER_ADMIN"), "SUPER_ADMIN must not appear in the approval routing table");
-    assert.deepEqual(Object.keys(workflow.routing), ["FACULTY_REVIEW", "ASSISTANT_REVIEW", "DOSA_STAFF_REVIEW", "ADOSA_REVIEW", "DOSA_REVIEW"]);
+    assert.deepEqual(Object.keys(workflow.routing), ["FACULTY_REVIEW", "DOSA_STAFF_REVIEW", "ADOSA_REVIEW", "DOSA_REVIEW"]);
     const pendingReview = await Review.findOne({ eventId: event._id, stage: "FACULTY_REVIEW" });
     await assert.rejects(
       workflow.decide({ userId: superAdmin._id, reviewId: pendingReview._id, decision: "APPROVE" }),

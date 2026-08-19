@@ -102,8 +102,7 @@ const payload = (societyId, title, date, items = [{ head: "Drone Show", quantity
       return u;
     };
 
-    const assistant = await staff("Assistant-B", "ASSISTANT"),
-      dosaStaff = await staff("DoSA-Staff-B", "DOSA_STAFF"),
+    const dosaStaff = await staff("DoSA-Staff-B", "DOSA_STAFF"),
       adosa = await staff("ADoSA-B", "ADOSA"),
       dosa = await staff("DoSA-B", "DOSA");
 
@@ -113,8 +112,7 @@ const payload = (societyId, title, date, items = [{ head: "Drone Show", quantity
       const evt = await service.submit(gs.user._id, draft._id);
       let review = (await workflow.queue(presidentUser._id, { status: "PENDING" })).items.find((x) => String(x.eventId._id) === String(evt._id));
       await workflow.decide({ userId: presidentUser._id, reviewId: review._id, decision: "APPROVE" });
-      review = (await workflow.queue(assistant._id, { status: "PENDING" })).items.find((x) => String(x.eventId._id) === String(evt._id));
-      await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
+      // Assistant is removed from Event approval: FACULTY_REVIEW routes straight to DoSA Staff.
       review = (await workflow.queue(dosaStaff._id, { status: "PENDING" })).items.find((x) => String(x.eventId._id) === String(evt._id));
       if (items.length) await workflow.saveBudgetReview({ userId: dosaStaff._id, reviewId: review._id, items: recommendedAmounts });
       await workflow.decide({ userId: dosaStaff._id, reviewId: review._id, decision: "APPROVE" });
@@ -142,10 +140,13 @@ const payload = (societyId, title, date, items = [{ head: "Drone Show", quantity
     assert.equal(txOk.amount, 10000);
     assert.equal(String(txOk._id), String(decided.event.budget.budgetTransactionId));
 
-    // === 2. Double-submit case: retrying the already-decided review must not deduct again ===
+    // === 2. Double-submit case: retrying the already-decided review must not deduct again. The
+    // Event is now APPROVED (terminal), so this is refused as EVENT_REVIEW_STALE — the mandatory
+    // staleness gate that also protects an APPROVED Event from any old review (see
+    // verify-event-workflow.js Test F) — rather than the narrower EVENT_REVIEW_ALREADY_DECIDED.
     await assert.rejects(
       workflow.decide({ userId: dosa._id, reviewId: reviewOk._id, decision: "APPROVE" }),
-      (error) => error.code === "EVENT_REVIEW_ALREADY_DECIDED"
+      (error) => error.code === "EVENT_REVIEW_STALE" && error.statusCode === 409
     );
     assert.equal((await budgets.getBudget(budgetOk._id)).utilizedAmount, 10000, "a retried decision must not deduct twice");
     assert.equal(await SocietyBudgetTransaction.countDocuments({ referenceType: "EVENT", referenceId: eventOk._id }), 1, "exactly one transaction must exist for the event");

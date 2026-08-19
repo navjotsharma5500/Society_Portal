@@ -1,11 +1,23 @@
-const WORKFLOW_STAGES = Object.freeze({
+// ACTIVE_WORKFLOW_STAGES drives the live approval routing engine (see eventWorkflow.service.js
+// `routing`) and is the only set new Events / new resubmission attempts ever move through.
+// ASSISTANT_REVIEW is retained only as a LEGACY stage: old EventReview/Event documents created
+// before Assistant was removed from Event approval may still carry it, and it must remain a valid
+// enum value so that historical data stays readable — but it is never assignable to a new review
+// and is excluded from routing, queues, and live-request accounting.
+const ACTIVE_WORKFLOW_STAGES = Object.freeze({
   FACULTY_REVIEW: "FACULTY_REVIEW",
-  ASSISTANT_REVIEW: "ASSISTANT_REVIEW",
   DOSA_STAFF_REVIEW: "DOSA_STAFF_REVIEW",
   ADOSA_REVIEW: "ADOSA_REVIEW",
   DOSA_REVIEW: "DOSA_REVIEW",
 });
-const LIVE_EVENT_REQUEST_STATUSES = Object.freeze(Object.values(WORKFLOW_STAGES));
+const LEGACY_WORKFLOW_STAGES = Object.freeze({
+  ASSISTANT_REVIEW: "ASSISTANT_REVIEW",
+});
+const WORKFLOW_STAGES = Object.freeze({
+  ...ACTIVE_WORKFLOW_STAGES,
+  ...LEGACY_WORKFLOW_STAGES,
+});
+const LIVE_EVENT_REQUEST_STATUSES = Object.freeze(Object.values(ACTIVE_WORKFLOW_STAGES));
 const resolveSanctionedBudgetAmount = (budget = {}) => {
   const recommended = Number(budget?.totalRecommended);
   if (Number.isFinite(recommended) && recommended > 0) return recommended;
@@ -124,6 +136,8 @@ module.exports = {
     APPROVED: "APPROVED",
   }),
   WORKFLOW_STAGES,
+  ACTIVE_WORKFLOW_STAGES,
+  LEGACY_WORKFLOW_STAGES,
   LIVE_EVENT_REQUEST_STATUSES,
   isLiveEventRequestStatus: (status) => LIVE_EVENT_REQUEST_STATUSES.includes(status),
   MODES: Object.freeze({

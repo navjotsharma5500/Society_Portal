@@ -92,8 +92,7 @@ const payload = (societyId, title, date, items) => ({
       return u;
     };
 
-    const assistant = await staff("Assistant-R", "ASSISTANT"),
-      dosaStaff = await staff("DoSA-Staff-R", "DOSA_STAFF"),
+    const dosaStaff = await staff("DoSA-Staff-R", "DOSA_STAFF"),
       adosa = await staff("ADoSA-R", "ADOSA"),
       dosa = await staff("DoSA-R", "DOSA");
 
@@ -137,11 +136,10 @@ const payload = (societyId, title, date, items) => ({
     assert.equal(evt.status, "FACULTY_REVIEW");
     assert.equal(evt.revision, 1);
 
-    // --- Attempt 1: President -> Assistant -> DoSA Staff (budget position visible, then rectification) ---
+    // --- Attempt 1: President -> DoSA Staff (budget position visible, then rectification). Assistant
+    // is removed from Event approval, so FACULTY_REVIEW routes straight to DoSA Staff. ---
     let review = await findPending(presMain._id, evt._id, "FACULTY_REVIEW");
     await workflow.decide({ userId: presMain._id, reviewId: review._id, decision: "APPROVE" });
-    review = await findPending(assistant._id, evt._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
 
     review = await findPending(dosaStaff._id, evt._id, "DOSA_STAFF_REVIEW");
     const dosaDetail1 = await workflow.detail(dosaStaff._id, evt._id);
@@ -221,12 +219,10 @@ const payload = (societyId, title, date, items) => ({
     assert.equal(presidentPending.length, 1, "only one active pending review should exist for the reviewer");
     assert.equal(presidentPending[0].attempt, 2);
 
-    // --- Attempt 2: President -> Assistant -> DoSA Staff rectifies again ---
+    // --- Attempt 2: President -> DoSA Staff rectifies again ---
     review = await findPending(presMain._id, evt._id, "FACULTY_REVIEW");
     assert.equal(review.attempt, 2, "the new President review must belong to attempt 2");
     await workflow.decide({ userId: presMain._id, reviewId: review._id, decision: "APPROVE" });
-    review = await findPending(assistant._id, evt._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
     review = await findPending(dosaStaff._id, evt._id, "DOSA_STAFF_REVIEW");
     const decided2 = await workflow.decide({ userId: dosaStaff._id, reviewId: review._id, decision: "BUDGET_RECTIFICATION", remarks: "Still too high for this quarter's allocation." });
     assert.equal(decided2.event.status, "BUDGET_RECTIFICATION_REQUIRED");
@@ -237,12 +233,10 @@ const payload = (societyId, title, date, items) => ({
     assert.equal(evt.revision, 3, "multiple rectification cycles must keep incrementing the attempt number");
     assert.equal(evt.budget.totalEstimated, 6500);
 
-    // --- Attempt 3: President -> Assistant -> DoSA Staff (accepts) -> ADoSA -> DoSA (final approval + deduction) ---
+    // --- Attempt 3: President -> DoSA Staff (accepts) -> ADoSA -> DoSA (final approval + deduction) ---
     review = await findPending(presMain._id, evt._id, "FACULTY_REVIEW");
     assert.equal(review.attempt, 3);
     await workflow.decide({ userId: presMain._id, reviewId: review._id, decision: "APPROVE" });
-    review = await findPending(assistant._id, evt._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: review._id, decision: "APPROVE" });
     review = await findPending(dosaStaff._id, evt._id, "DOSA_STAFF_REVIEW");
     await workflow.saveBudgetReview({ userId: dosaStaff._id, reviewId: review._id, items: [{ recommendedAmount: 6500, reviewRemark: "Acceptable" }] });
     await workflow.decide({ userId: dosaStaff._id, reviewId: review._id, decision: "APPROVE" });
@@ -285,8 +279,6 @@ const payload = (societyId, title, date, items) => ({
     let evtCancel = await service.submit(gsCancel.user._id, draftCancel._id);
     let r = await findPending(presMain._id, evtCancel._id, "FACULTY_REVIEW");
     await workflow.decide({ userId: presMain._id, reviewId: r._id, decision: "APPROVE" });
-    r = await findPending(assistant._id, evtCancel._id, "ASSISTANT_REVIEW");
-    await workflow.decide({ userId: assistant._id, reviewId: r._id, decision: "APPROVE" });
     r = await findPending(dosaStaff._id, evtCancel._id, "DOSA_STAFF_REVIEW");
     await workflow.decide({ userId: dosaStaff._id, reviewId: r._id, decision: "BUDGET_RECTIFICATION", remarks: "Please reconsider the catering cost." });
 

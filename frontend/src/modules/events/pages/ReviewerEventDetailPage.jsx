@@ -94,9 +94,13 @@ export default function ReviewerEventDetailPage() {
       const message =
         e.errorCode === "EVENT_REVIEW_ALREADY_DECIDED"
           ? "This Event review has already been decided."
+          : e.errorCode === "EVENT_REVIEW_STALE"
+          ? "This review belongs to an earlier Event approval attempt and is no longer actionable."
           : e.readableMessage;
       setError(message);
       notify?.(message, "error");
+      if (e.errorCode === "EVENT_REVIEW_STALE" || e.errorCode === "EVENT_REVIEW_ALREADY_DECIDED")
+        await load();
     } finally {
       setSaving(false);
     }
@@ -317,14 +321,6 @@ export default function ReviewerEventDetailPage() {
                 >
                   {assistantMode ? "REQUEST CHANGES" : "Request Changes"}
                 </Button>
-                {dosaStaffMode && (
-                  <Button
-                    variant="outline"
-                    onClick={() => decide("BUDGET_RECTIFICATION")}
-                  >
-                    Send for Budget Rectification
-                  </Button>
-                )}
                 <Button variant="danger" onClick={() => decide("REJECT")}>
                   {assistantMode ? "REJECT" : "Reject"}
                 </Button>

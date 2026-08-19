@@ -612,6 +612,10 @@ const submit = async (userId, id) => {
       societyId: String(event.societyId),
     },
   });
+  // Defense in depth: before a resubmission's fresh FACULTY_REVIEW is assigned, guarantee there is
+  // no leftover PENDING review from the attempt being superseded (e.g. bad pre-existing data, or a
+  // race). At most one attempt may ever have an actionable PENDING review for this Event.
+  if (isResubmission) await workflow.supersedePendingReviews(event._id);
   await workflow.assign(event, stage, event.revision, reviewers);
   return get(userId, event._id);
 };

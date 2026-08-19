@@ -16,7 +16,7 @@ const schema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["PENDING", "APPROVED", "CHANGES_REQUESTED", "REJECTED"],
+      enum: ["PENDING", "APPROVED", "CHANGES_REQUESTED", "REJECTED", "SUPERSEDED"],
       default: "PENDING",
       index: true,
     },
