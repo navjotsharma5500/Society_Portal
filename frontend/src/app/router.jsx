@@ -58,6 +58,9 @@ import AdminBudgetsPage from "../modules/budgets/pages/AdminBudgetsPage";
 import AdministrativeWorkspaceLayout from "../modules/administration/layouts/AdministrativeWorkspaceLayout";
 import { EventBrowserPage, EventDetailsPage as AdministrativeEventDetailsPage, SocietyBrowserPage, SocietyReadPage, StudentBrowserPage, StudentReadPage, WorkspaceDashboardPage, WorkspaceUnavailablePage } from "../modules/administration/pages/WorkspacePages";
 import ProfilePage from "../modules/profile/pages/ProfilePage";
+import DosaLayout from "../layouts/DosaLayout";
+import DosaHomePage from "../modules/dashboard/pages/DosaHomePage";
+import { DosaEventsPage } from "../modules/events/pages/DosaEventPages";
 const guestLogin = (
     <GuestOnlyRoute>
       <StudentLoginPage />
@@ -206,13 +209,12 @@ export const router = createBrowserRouter([
   },
   {
     path: "/dosa",
-    element: staffProtected(<AdministrativeWorkspaceLayout roleCode="DOSA" />),
+    element: staffProtected(<DosaLayout />),
     children: [
       { index: true, element: <Navigate to="dashboard" replace /> },
-      { path: "dashboard", element: <WorkspaceDashboardPage title="DoSA" /> },
-      { path: "events", element: <EventBrowserPage basePath="/dosa/events" title="DoSA Events" /> },
-      { path: "events/:eventId", element: <AdministrativeEventDetailsPage /> },
-      { path: "notifications", element: <WorkspaceUnavailablePage title="Notifications" description="The shared notification delivery API is not available yet; no separate notification store was created." /> },
+      { path: "dashboard", element: <DosaHomePage /> },
+      { path: "events", element: <DosaEventsPage /> },
+      { path: "events/:eventId", element: <ReviewerEventDetailPage /> },
       { path: "profile", element: <ProfilePage /> },
     ],
   },

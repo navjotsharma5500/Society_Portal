@@ -7,7 +7,11 @@ router.use(authenticateSession);
 router.get("/", requirePermission("event.view"), v.page, c.all);
 router.get("/reviews/assigned-to-me", c.reviews);
 router.get("/reviews/assigned-counts", c.reviewCounts);
-router.get("/live-request-usage", requirePermission("event.view"), c.liveRequestUsage);
+// Self-scoped: always computed from the authenticated caller's own userId (never a request-supplied
+// one), so a route-level society-scoped permission gate is both unnecessary and incorrectly denies
+// a Society-scoped General Secretary (their "event.view" grant never matches the GLOBAL-only scope
+// requirePermission() checks here without a :societyId param). authenticateSession is sufficient.
+router.get("/live-request-usage", c.liveRequestUsage);
 router.get("/reviews/event/:eventId", c.reviewDetail);
 router.post("/reviews/:reviewId/decision", c.decide);
 router.post("/reviews/:reviewId/amend", c.amend);
@@ -17,4 +21,5 @@ router.post("/", v.clean, c.create);
 router.get("/:eventId", c.get);
 router.patch("/:eventId", v.clean, c.update);
 router.post("/:eventId/submit", c.submit);
+router.post("/:eventId/cancel", c.cancel);
 module.exports = router;

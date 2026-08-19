@@ -11,6 +11,8 @@ export const updateEvent = async (id, data) =>
   body(await apiClient.patch(`/events/${id}`, data)).event;
 export const submitEvent = async (id) =>
   body(await apiClient.post(`/events/${id}/submit`)).event;
+export const cancelEvent = async (id, reason) =>
+  body(await apiClient.post(`/events/${id}/cancel`, { reason })).event;
 export const getLiveEventRequestUsage = async (excludeEventId) => body(await apiClient.get("/events/live-request-usage", { params: { excludeEventId } }));
 export const listAssignedEventReviews = async (params) =>
   body(await apiClient.get("/events/reviews/assigned-to-me", { params }));

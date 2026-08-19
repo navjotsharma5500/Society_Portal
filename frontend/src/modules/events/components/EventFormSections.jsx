@@ -273,15 +273,20 @@ export function EventAnnexureSection({ form, set }) {
   );
 }
 
-export function EventPlanningSection({ form, set }) {
+export function EventPlanningSection({ form, set, budgetOnly = false }) {
   const previous = form.previousEvents || [],
     budget = form.budget || { items: [] },
     items = budget.items || [];
   return (
     <section className="event-card">
       <h2>References, budget & contacts</h2>
-      <h3>Previous events</h3>
-      {previous.map((row, index) => (
+      {budgetOnly && (
+        <p className="event-warning">
+          Only the budget below may be changed during budget rectification. Other proposal details are locked.
+        </p>
+      )}
+      {!budgetOnly && <h3>Previous events</h3>}
+      {!budgetOnly && previous.map((row, index) => (
         <div className="event-row" key={index}>
           <select
             value={row.source || "MANUAL"}
@@ -335,15 +340,17 @@ export function EventPlanningSection({ form, set }) {
           </button>
         </div>
       ))}
-      <button
-        type="button"
-        className="event-secondary"
-        onClick={() =>
-          set("previousEvents", add(previous, { source: "MANUAL", title: "" }))
-        }
-      >
-        Add previous event
-      </button>
+      {!budgetOnly && (
+        <button
+          type="button"
+          className="event-secondary"
+          onClick={() =>
+            set("previousEvents", add(previous, { source: "MANUAL", title: "" }))
+          }
+        >
+          Add previous event
+        </button>
+      )}
       <h3>Estimated budget</h3>
       {items.map((row, index) => (
         <div className="event-row" key={index}>
@@ -425,17 +432,19 @@ export function EventPlanningSection({ form, set }) {
           0
         )}
       </p>
-      <Field label="Point of contact">
-        <select
-          value={form.poc?.label || "GENERAL_SECRETARY"}
-          onChange={(event) =>
-            set("poc", { ...form.poc, label: event.target.value })
-          }
-        >
-          <option value="GENERAL_SECRETARY">General Secretary</option>
-          <option value="EVENT_HEAD">Event Head</option>
-        </select>
-      </Field>
+      {!budgetOnly && (
+        <Field label="Point of contact">
+          <select
+            value={form.poc?.label || "GENERAL_SECRETARY"}
+            onChange={(event) =>
+              set("poc", { ...form.poc, label: event.target.value })
+            }
+          >
+            <option value="GENERAL_SECRETARY">General Secretary</option>
+            <option value="EVENT_HEAD">Event Head</option>
+          </select>
+        </Field>
+      )}
     </section>
   );
 }
@@ -448,7 +457,6 @@ export function EventGovernanceSection({ event }) {
     ["ASSISTANT_REVIEW", "Assistant Review"],
     ["DOSA_STAFF_REVIEW", "DoSA Staff Review"],
     ["ADOSA_REVIEW", "ADoSA Review"],
-    ["ADMIN_REVIEW", "Admin Review"],
     ["DOSA_REVIEW", "DoSA Final Approval"],
   ];
   return (
@@ -483,6 +491,7 @@ export function EventGovernanceSection({ event }) {
                 {label} · {state.replaceAll("_", " ")}
                 {item?.decidedAt &&
                   ` · ${new Date(item.decidedAt).toLocaleDateString()}`}
+                {item?.remarks && <small className="event-remark">“{item.remarks}”</small>}
               </span>
             );
           })}

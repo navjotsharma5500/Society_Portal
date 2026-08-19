@@ -42,9 +42,12 @@ export default function SocietyAdminEventsPage() {
               "FACULTY_REVIEW",
               "ASSISTANT_REVIEW",
               "DOSA_STAFF_REVIEW",
-              "ADMIN_REVIEW",
+              "ADOSA_REVIEW",
+              "DOSA_REVIEW",
               "CHANGES_REQUESTED",
+              "BUDGET_RECTIFICATION_REQUIRED",
               "REJECTED",
+              "CANCELLED",
               "APPROVED",
             ]}
           />

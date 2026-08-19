@@ -18,10 +18,15 @@ const assert = require("node:assert/strict"),
   service = require("../src/modules/events/event.service"),
   workflow = require("../src/modules/events/eventWorkflow.service"),
   assignments = require("../src/modules/userRoleAssignments/userRoleAssignment.service"),
+  budgets = require("../src/modules/societyBudgets/societyBudget.service"),
+  academicSessions = require("../src/modules/academicSessions/academicSession.service"),
+  SocietyBudget = require("../src/modules/societyBudgets/societyBudget.model"),
+  SocietyBudgetTransaction = require("../src/modules/societyBudgets/societyBudgetTransaction.model"),
+  { WORKFLOW_STAGES } = require("../src/modules/events/event.constants"),
   {
     seedRolePermissionEngine,
   } = require("../src/modules/authorization/rolePermissionEngineSeed.service");
-const ids = { users: [], students: [], societies: [] },
+const ids = { users: [], students: [], societies: [], budgets: [] },
   payload = (societyId, title) => ({
     societyId,
     title,
@@ -74,6 +79,9 @@ const ids = { users: [], students: [], societies: [] },
         isActive: true,
       });
     ids.societies.push(society._id);
+    const currentSession = await academicSessions.getCurrentAcademicSession({ required: true });
+    const budget = await budgets.createAnnualBudget({ societyId: society._id, academicSessionId: currentSession._id, allocatedAmount: 100000, remarks: "verify-event-workflow" });
+    ids.budgets.push(budget._id);
     const student = async (name) => {
       const s = await Student.create({
         name,
@@ -277,6 +285,10 @@ const ids = { users: [], students: [], societies: [] },
     review = (await workflow.queue(adosa._id, { status: "PENDING" })).items.find((x) => String(x.eventId._id) === String(event._id));
     await workflow.decide({ userId: adosa._id, reviewId: review._id, decision: "APPROVE" });
     assert.equal((await Event.findById(event._id)).status, "DOSA_REVIEW");
+    assert(!Object.values(WORKFLOW_STAGES).includes("ADMIN_REVIEW"));
+    assert(!Object.prototype.hasOwnProperty.call(workflow.routing, "ADMIN_REVIEW"));
+    assert.equal(await Review.countDocuments({ eventId: event._id, stage: "ADMIN_REVIEW" }), 0);
+    assert.equal((await workflow.queue(admin._id, { status: "PENDING" })).items.length, 0);
     review = (await workflow.queue(dosa._id, { status: "PENDING" })).items.find(
       (x) => String(x.eventId._id) === String(event._id)
     );
@@ -285,7 +297,18 @@ const ids = { users: [], students: [], societies: [] },
       reviewId: review._id,
       decision: "APPROVE",
     });
-    assert.equal((await Event.findById(event._id)).status, "APPROVED");
+    const approvedEvent = await Event.findById(event._id).lean();
+    assert.equal(approvedEvent.status, "APPROVED");
+    assert.equal(approvedEvent.budget.deductionStatus, "POSTED");
+    assert.equal(approvedEvent.budget.deductedAmount, 2500);
+    assert(approvedEvent.budget.budgetTransactionId, "final approval must link a budget transaction");
+    assert.equal((await budgets.getBudget(budget._id)).utilizedAmount, 2500);
+    assert.equal(await SocietyBudgetTransaction.countDocuments({ referenceType: "EVENT", referenceId: event._id }), 1);
+    await assert.rejects(
+      workflow.decide({ userId: dosa._id, reviewId: review._id, decision: "APPROVE" }),
+      (error) => error.code === "EVENT_REVIEW_ALREADY_DECIDED"
+    );
+    assert.equal((await budgets.getBudget(budget._id)).utilizedAmount, 2500, "a retried final approval must not deduct twice");
     assert.equal(await Amendment.countDocuments({ eventId: event._id }), 1);
     const rejectedEvent = await service.create({
       user: gsA.user,
@@ -339,23 +362,46 @@ const ids = { users: [], students: [], societies: [] },
     review = (
       await workflow.queue(presidentA._id, { status: "PENDING" })
     ).items.find((x) => String(x.eventId._id) === String(correction._id));
+    const presidentAttempt2ReviewId = review._id;
     await workflow.decide({
       userId: presidentA._id,
       reviewId: review._id,
       decision: "APPROVE",
     });
+    // Assistant may now Request Changes too (final business rule: every stage can send an Event
+    // back to the Student). This must return the Event to the Student, and resubmission must
+    // restart the WHOLE chain from FACULTY_REVIEW — never resume directly at ASSISTANT_REVIEW.
     review = (
       await workflow.queue(assistant._id, { status: "PENDING" })
     ).items.find((x) => String(x.eventId._id) === String(correction._id));
-    await assert.rejects(workflow.decide({
+    const assistantRequestedChanges = await workflow.decide({
       userId: assistant._id,
       reviewId: review._id,
       decision: "REQUEST_CHANGES",
       remarks: "Clarify budget",
-    }), (error) => error.code === "EVENT_PERMISSION_DENIED");
+    });
+    assert.equal(assistantRequestedChanges.event.status, "CHANGES_REQUESTED");
+    assert.equal(assistantRequestedChanges.event.correctionStage, "ASSISTANT_REVIEW");
+    const revisionBeforeAssistantFix = assistantRequestedChanges.event.revision;
+    await service.update(gsA.user._id, correction._id, {
+      objective: "Clarified again after Assistant feedback",
+    });
+    const resubmittedAfterAssistant = await service.submit(gsA.user._id, correction._id);
     assert.equal(
-      (await Event.findById(correction._id)).status,
-      "ASSISTANT_REVIEW"
+      resubmittedAfterAssistant.status,
+      "FACULTY_REVIEW",
+      "resubmission after Assistant Request Changes must restart at FACULTY_REVIEW, not resume at ASSISTANT_REVIEW"
+    );
+    assert.equal(resubmittedAfterAssistant.revision, revisionBeforeAssistantFix + 1);
+    const freshPresidentReview = (
+      await workflow.queue(presidentA._id, { status: "PENDING" })
+    ).items.find((x) => String(x.eventId._id) === String(correction._id));
+    assert(freshPresidentReview, "a fresh President review must be created for the new attempt");
+    assert.equal(freshPresidentReview.attempt, resubmittedAfterAssistant.revision);
+    assert.notEqual(
+      String(freshPresidentReview._id),
+      String(presidentAttempt2ReviewId),
+      "the earlier President approval must not be reused for the new attempt"
     );
     assert((await workflow.history(correction._id)).length >= 4);
     console.log(
@@ -371,9 +417,11 @@ const ids = { users: [], students: [], societies: [] },
           originalSubmissionPreserved: true,
           amendmentReasonRequired: true,
           dosaStaffRoutesToAdosa: true,
+          adminRemovedFromEventApprovals: true,
           dosaFinalApproval: true,
           facultyCorrection: true,
-          assistantCorrectionDenied: true,
+          assistantCanRequestChanges: true,
+          resubmissionAlwaysRestartsAtPresident: true,
           historyPreserved: true,
           countsIncludeEvents: true,
           cleanup: true,
@@ -390,6 +438,8 @@ const ids = { users: [], students: [], societies: [] },
     await Amendment.deleteMany({ eventId: { $in: eventIds } });
     await Audit.deleteMany({ eventId: { $in: eventIds } });
     await Event.deleteMany({ _id: { $in: eventIds } });
+    await SocietyBudgetTransaction.deleteMany({ budgetId: { $in: ids.budgets } });
+    await SocietyBudget.deleteMany({ _id: { $in: ids.budgets } });
     await Membership.deleteMany({ userId: { $in: ids.users } });
     await Assignment.deleteMany({ userId: { $in: ids.users } });
     await User.deleteMany({ _id: { $in: ids.users } });

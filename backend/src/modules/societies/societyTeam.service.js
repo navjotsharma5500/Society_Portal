@@ -1,12 +1,21 @@
-const mongoose = require("mongoose");
-const AppError = require("../../common/errors/AppError");
-const Society = require("./society.model");
-const Assignment = require("../userRoleAssignments/userRoleAssignment.model");
-const Membership = require("../societyMemberships/societyMembership.model");
-const Leadership = require("../societyLeadership/societyLeadership.model");
-const User = require("../users/user.model");
-const Student = require("../studentMaster/studentMaster.model");
-const { resolveProfilePicture } = require("../identity/profilePicture");
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require societyTeam.service -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const mongoose = timedRequire("mongoose", "mongoose");
+const AppError = timedRequire("AppError", "../../common/errors/AppError");
+const Society = timedRequire("society.model", "./society.model");
+const Assignment = timedRequire("userRoleAssignment.model", "../userRoleAssignments/userRoleAssignment.model");
+const Membership = timedRequire("societyMembership.model", "../societyMemberships/societyMembership.model");
+const Leadership = timedRequire("societyLeadership.model", "../societyLeadership/societyLeadership.model");
+const User = timedRequire("user.model", "../users/user.model");
+const Student = timedRequire("studentMaster.model", "../studentMaster/studentMaster.model");
+const { resolveProfilePicture } = timedRequire("profilePicture", "../identity/profilePicture");
 
 const MAX_TEAM_RECORDS = 2000;
 const activeWindow = (now) => ({

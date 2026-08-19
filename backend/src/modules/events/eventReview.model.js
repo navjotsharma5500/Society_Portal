@@ -26,7 +26,7 @@ const schema = new mongoose.Schema(
     assignedRoleCode: { type: String, required: true },
     assignedAt: { type: Date, default: Date.now },
     decidedByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    decision: { type: String, enum: ["APPROVE", "REQUEST_CHANGES", "REJECT"] },
+    decision: { type: String, enum: ["APPROVE", "REQUEST_CHANGES", "REJECT", "BUDGET_RECTIFICATION"] },
     remarks: { type: String, trim: true, maxlength: 3000 },
     decidedAt: Date,
     attempt: { type: Number, default: 1, min: 1 },

@@ -150,6 +150,7 @@ const groups = {
     "event.page.view",
     "event.create",
     "event.view",
+    "event_admin.view_all",
     "event.edit_own",
     "event.submit",
     "event.list_society",
@@ -167,6 +168,7 @@ const groups = {
     "event.review.final_approve",
     "event.budget_review.view",
     "event.budget_review.edit",
+    "event.budget_review.rectify",
   ],
   VENUE: ["venue.page.view", "venue.view", "venue.request", "venue.approve"],
   NIGHT_PERMISSION: [

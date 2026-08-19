@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Info } from "lucide-react";
 import {
   Button,
   EmptyState,
+  IconButton,
+  Modal,
   PageHeader,
   Skeleton,
   StatusChip,
   Textarea,
+  Tooltip,
 } from "../../../design-system";
 import {
   EventAnnexureSection,
@@ -19,6 +23,7 @@ import {
   getReviewEvent,
   saveEventBudgetReview,
 } from "../services/eventApi";
+import { useToast } from "../../../components/common/toastContext";
 import "../events.css";
 const date = (v) => (v ? String(v).slice(0, 10) : "");
 const formOf = (e) => ({
@@ -47,7 +52,9 @@ export default function ReviewerEventDetailPage() {
     [editing, setEditing] = useState(false),
     [remarks, setRemarks] = useState(""),
     [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [showBudgetPanel, setShowBudgetPanel] = useState(false),
+    { notify } = useToast();
   const load = useCallback(
     () =>
       getReviewEvent(eventId)
@@ -84,11 +91,12 @@ export default function ReviewerEventDetailPage() {
       setEditing(false);
       setRemarks("");
     } catch (e) {
-      setError(
+      const message =
         e.errorCode === "EVENT_REVIEW_ALREADY_DECIDED"
           ? "This Event review has already been decided."
-          : e.readableMessage
-      );
+          : e.readableMessage;
+      setError(message);
+      notify?.(message, "error");
     } finally {
       setSaving(false);
     }
@@ -101,6 +109,7 @@ export default function ReviewerEventDetailPage() {
       await load();
     } catch (e) {
       setError(e.readableMessage);
+      notify?.(e.readableMessage, "error");
     } finally {
       setSaving(false);
     }
@@ -109,6 +118,10 @@ export default function ReviewerEventDetailPage() {
     return <EmptyState title="Event unavailable" description={error} />;
   if (!event) return <Skeleton lines={10} />;
   const active = event.activeReview;
+  const budgetPosition = event.budgetPosition;
+  const overBudget = Boolean(
+    dosaStaffMode && budgetPosition && !budgetPosition.unavailable && budgetPosition.projectedRemaining < 0
+  );
   return (
     <div className="page-stack events-page">
       <Button variant="ghost" onClick={() => navigate(-1)}>
@@ -177,7 +190,20 @@ export default function ReviewerEventDetailPage() {
                 {x.name} · {x.designation || x.affiliation || "—"}
               </p>
             ))}
-            <h3>Budget breakup</h3>
+            <h3>
+              Budget breakup
+              {dosaStaffMode && (
+                <Tooltip content="View Society Budget">
+                  <IconButton
+                    label="View Society Budget"
+                    onClick={() => setShowBudgetPanel(true)}
+                    style={{ marginLeft: 8, verticalAlign: "middle" }}
+                  >
+                    <Info size={16} />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </h3>
             {event.budget?.items?.map((x, i) => (
               <p key={i}>
                 {x.head}: {x.quantity} × ₹{x.estimatedUnitCost} = ₹
@@ -186,6 +212,18 @@ export default function ReviewerEventDetailPage() {
             ))}
             {dosaStaffMode && (
               <p><b>Total requested:</b> ₹{event.budget?.totalEstimated || 0} · <b>Total recommended:</b> ₹{event.budget?.totalRecommended || 0}</p>
+            )}
+            {overBudget && (
+              <div className="event-warning" role="alert">
+                <b>Insufficient Budget Balance</b>
+                <p>
+                  The Event requirement exceeds the Society's currently available budget. Please review the
+                  budget before forwarding this Event.
+                </p>
+              </div>
+            )}
+            {dosaStaffMode && budgetPosition?.unavailable && (
+              <p className="event-warning">No annual budget is configured for this society and academic session.</p>
             )}
             <h3>Previous events</h3>
             {event.previousEvents?.map((x, i) => (
@@ -201,15 +239,14 @@ export default function ReviewerEventDetailPage() {
               event.amendmentHistory.map((x) => (
                 <section key={x._id}>
                   <b>
-                    {x.changedByRoleCode.replaceAll("_", " ")} revised the
-                    proposal
+                    {x.changedByRoleCode === "STUDENT"
+                      ? "Student revised"
+                      : `${x.changedByRoleCode.replaceAll("_", " ")} revised`}{" "}
+                    the proposal
                   </b>
                   <p>{x.reason}</p>
-                  {x.changes.map((c) => (
-                    <p key={c.fieldPath}>
-                      {c.fieldPath}: {JSON.stringify(c.oldValue)} →{" "}
-                      {JSON.stringify(c.newValue)}
-                    </p>
+                  {(x.summary || x.changes.map((c) => `${c.fieldPath.replaceAll(".", " ")} was updated.`)).map((line, i) => (
+                    <p key={i}>{line}</p>
                   ))}
                 </section>
               ))
@@ -274,12 +311,18 @@ export default function ReviewerEventDetailPage() {
                     {assistantMode ? "EDIT" : "Edit & Forward"}
                   </Button>
                 )}
-                {!assistantMode && !dosaStaffMode && (
+                <Button
+                  variant="outline"
+                  onClick={() => decide("REQUEST_CHANGES")}
+                >
+                  {assistantMode ? "REQUEST CHANGES" : "Request Changes"}
+                </Button>
+                {dosaStaffMode && (
                   <Button
                     variant="outline"
-                    onClick={() => decide("REQUEST_CHANGES")}
+                    onClick={() => decide("BUDGET_RECTIFICATION")}
                   >
-                    Request Changes
+                    Send for Budget Rectification
                   </Button>
                 )}
                 <Button variant="danger" onClick={() => decide("REJECT")}>
@@ -289,6 +332,44 @@ export default function ReviewerEventDetailPage() {
             )}
           </div>
         </section>
+      )}
+      {dosaStaffMode && (
+        <Modal
+          open={showBudgetPanel}
+          onClose={() => setShowBudgetPanel(false)}
+          title="Society Budget Position"
+        >
+          {budgetPosition?.unavailable ? (
+            <p className="event-warning">
+              No annual budget is configured for this society and academic session.
+            </p>
+          ) : budgetPosition ? (
+            <div className="page-stack">
+              <div className="event-grid">
+                <Value label="Society">{event.societyId?.name}</Value>
+                <Value label="Academic session">{event.academicSession}</Value>
+                <Value label="Allocated">₹{budgetPosition.allocatedAmount}</Value>
+                <Value label="Utilized">₹{budgetPosition.utilizedAmount}</Value>
+                <Value label="Available">₹{budgetPosition.availableAmount}</Value>
+                <Value label="Event Requirement">₹{budgetPosition.requestedAmount}</Value>
+                <Value label="DoSA Staff Recommended">₹{budgetPosition.recommendedAmount}</Value>
+                <Value label="Remaining if recommended is approved">
+                  ₹{budgetPosition.projectedRemaining}
+                </Value>
+              </div>
+              {overBudget && (
+                <div className="event-warning" role="alert">
+                  <b>Insufficient Balance</b>
+                  <p>Shortfall: ₹{Math.abs(budgetPosition.projectedRemaining)}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="muted">
+              Budget position is only available while this Event is at the DoSA Staff stage.
+            </p>
+          )}
+        </Modal>
       )}
     </div>
   );

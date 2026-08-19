@@ -10,43 +10,28 @@ const User = require("../users/user.model");
 const Society = require("../societies/society.model");
 const authz = require("../authorization/authorization.service");
 const domainEvents = require("../../common/events/domainEvent.service");
-const { WORKFLOW_STAGES } = require("./event.constants");
+const budgets = require("../societyBudgets/societyBudget.service");
+const {
+  WORKFLOW_STAGES,
+  resolveSanctionedBudgetAmount,
+  recalculateBudgetItems,
+  amendableFields,
+  diffFields,
+  describeChanges,
+} = require("./event.constants");
 
 const routing = {
   FACULTY_REVIEW: { role: "PRESIDENT", next: "ASSISTANT_REVIEW" },
   ASSISTANT_REVIEW: { role: "ASSISTANT", next: "DOSA_STAFF_REVIEW" },
   DOSA_STAFF_REVIEW: { role: "DOSA_STAFF", next: "ADOSA_REVIEW" },
   ADOSA_REVIEW: { role: "ADOSA", next: "DOSA_REVIEW" },
-  ADMIN_REVIEW: { role: "ADMIN", next: "DOSA_REVIEW" },
   DOSA_REVIEW: { role: "DOSA", next: null },
 };
+const workflowStageValues = Object.freeze(Object.values(WORKFLOW_STAGES));
+const isWorkflowStage = (stage) => workflowStageValues.includes(stage);
 const reviewerLabel = (role) =>
   ({ DOSA_STAFF: "DoSA Staff", ADOSA: "ADoSA" }[role] || role.replaceAll("_", " "));
-const amendableFields = [
-  "title",
-  "startDate",
-  "endDate",
-  "dailySchedule",
-  "venueRequirement",
-  "objective",
-  "annexure",
-  "previousEvents",
-  "budget",
-];
-const plain = (value) => JSON.parse(JSON.stringify(value ?? null));
-const amendmentChanges = (event, proposal = {}) =>
-  amendableFields
-    .filter(
-      (field) =>
-        Object.prototype.hasOwnProperty.call(proposal, field) &&
-        JSON.stringify(plain(event[field])) !==
-          JSON.stringify(plain(proposal[field]))
-    )
-    .map((field) => ({
-      fieldPath: field,
-      oldValue: plain(event[field]),
-      newValue: plain(proposal[field]),
-    }));
+const amendmentChanges = (event, proposal = {}) => diffFields(event, proposal, amendableFields);
 const activeWindow = (now = new Date()) => ({
   status: "ACTIVE",
   isOngoing: true,
@@ -69,6 +54,8 @@ const activeWindow = (now = new Date()) => ({
 });
 const resolveReviewers = async (stage, societyId) => {
   const config = routing[stage];
+  if (!config)
+    throw new AppError("Event approval stage is unavailable", 409, "EVENT_REVIEW_STAGE_UNAVAILABLE");
   const role = await Role.findOne({
     code: config.role,
     status: "ACTIVE",
@@ -135,9 +122,13 @@ const assign = async (
   return review;
 };
 const history = (eventId) =>
-  Review.find({ eventId }).sort({ attempt: 1, createdAt: 1 }).lean();
-const amendments = (eventId) =>
-  Amendment.find({ eventId }).sort({ revisionNumber: 1 }).lean();
+  Review.find({ eventId, stage: { $in: workflowStageValues } })
+    .sort({ attempt: 1, createdAt: 1 })
+    .lean();
+const amendments = async (eventId) => {
+  const rows = await Amendment.find({ eventId }).sort({ revisionNumber: 1 }).lean();
+  return rows.map((row) => ({ ...row, summary: describeChanges(row.changes) }));
+};
 const queue = async (userId, filters = {}) => {
   const queuePermission = await authz.hasPermission({
     userId,
@@ -150,7 +141,12 @@ const queue = async (userId, filters = {}) => {
       403,
       "EVENT_PERMISSION_DENIED"
     );
-  const query = { assignedReviewerUserIds: userId };
+  if (filters.stage && !isWorkflowStage(filters.stage))
+    return {
+      items: [],
+      pagination: { page: 1, limit: 0, totalItems: 0, totalPages: 1 },
+    };
+  const query = { assignedReviewerUserIds: userId, stage: { $in: workflowStageValues } };
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   if (filters.view === "forwarded") {
@@ -200,6 +196,7 @@ const detail = async (userId, eventId) => {
   const assigned = await Review.exists({
     eventId,
     assignedReviewerUserIds: userId,
+    stage: { $in: workflowStageValues },
   });
   const allowed = await authz.hasPermission({
     userId,
@@ -219,16 +216,40 @@ const detail = async (userId, eventId) => {
         x.status === "PENDING" &&
         x.assignedReviewerUserIds.some((id) => String(id) === String(userId))
     ) || null;
+  // DoSA Staff alone gets the exact Society budget position while actively reviewing — this is a
+  // reviewer-only path (gated above by an assigned-reviewer check), never reachable by the student.
+  let budgetPosition = null;
+  if (activeReview?.stage === "DOSA_STAFF_REVIEW") {
+    try {
+      const societyBudget = await budgets.getCurrentBudget(event.societyId?._id || event.societyId, event.academicSession);
+      const requestedAmount = event.budget?.totalEstimated || 0;
+      const recommendedAmount = event.budget?.totalRecommended || 0;
+      budgetPosition = {
+        allocatedAmount: societyBudget.allocatedAmount,
+        utilizedAmount: societyBudget.utilizedAmount,
+        reservedAmount: societyBudget.reservedAmount,
+        availableAmount: societyBudget.availableAmount,
+        requestedAmount,
+        recommendedAmount,
+        projectedRemaining: societyBudget.availableAmount - (recommendedAmount > 0 ? recommendedAmount : requestedAmount),
+      };
+    } catch (error) {
+      if (error?.code !== "BUDGET_NOT_FOUND") throw error;
+      budgetPosition = { unavailable: true };
+    }
+  }
   return {
     ...event,
     reviewHistory,
     amendmentHistory: await amendments(eventId),
     activeReview,
+    budgetPosition,
   };
 };
 const counts = async (userId, societyId) => {
   const match = {
     assignedReviewerUserIds: new mongoose.Types.ObjectId(String(userId)),
+    stage: { $in: workflowStageValues },
   };
   const pipeline = [
     { $match: match },
@@ -257,6 +278,8 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
   const current = await Review.findById(reviewId).lean();
   if (!current)
     throw new AppError("Event review not found", 404, "EVENT_REVIEW_NOT_FOUND");
+  if (!isWorkflowStage(current.stage))
+    throw new AppError("Event approval stage is unavailable", 409, "EVENT_REVIEW_STAGE_UNAVAILABLE");
   if (
     !current.assignedReviewerUserIds.some((x) => String(x) === String(userId))
   )
@@ -271,6 +294,12 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
       "Assistant cannot amend Event proposal data",
       403,
       "EVENT_PERMISSION_DENIED"
+    );
+  if (decision === "BUDGET_RECTIFICATION" && current.stage !== "DOSA_STAFF_REVIEW")
+    throw new AppError(
+      "Budget rectification can only be requested at the DoSA Staff stage",
+      400,
+      "EVENT_BUDGET_RECTIFICATION_INVALID_STAGE"
     );
   const changes = amendmentChanges(event, amendment);
   if (changes.length && decision !== "APPROVE")
@@ -293,6 +322,8 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
       : "event.review.forward"
     : decision === "REQUEST_CHANGES"
     ? "event.review.request_changes"
+    : decision === "BUDGET_RECTIFICATION"
+    ? "event.budget_review.rectify"
     : "event.review.reject";
   if (
     !(
@@ -333,6 +364,26 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
       400,
       "EVENT_BUDGET_REVIEW_INCOMPLETE"
     );
+  // Hard block: DoSA Staff must not forward an Event whose effective amount (recommended, or
+  // requested/estimated when no recommendation exists) exceeds the Society's CURRENT available
+  // balance. Always re-fetched here — never trusts a value the client may have cached earlier.
+  if (decision === "APPROVE" && current.stage === "DOSA_STAFF_REVIEW") {
+    const effectiveAmount = resolveSanctionedBudgetAmount(event.budget);
+    if (effectiveAmount > 0) {
+      let availableAmount = 0;
+      try {
+        availableAmount = (await budgets.getCurrentBudget(event.societyId, event.academicSession)).availableAmount;
+      } catch (error) {
+        if (error?.code !== "BUDGET_NOT_FOUND") throw error;
+      }
+      if (effectiveAmount > availableAmount)
+        throw new AppError(
+          "The Event is over budget. Kindly check the budget requirement before forwarding.",
+          409,
+          "EVENT_BUDGET_EXCEEDS_AVAILABLE"
+        );
+    }
+  }
   if (decision === "APPROVE" && next) {
     nextReviewers = await resolveReviewers(next, event.societyId);
     if (!nextReviewers.length)
@@ -342,6 +393,29 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
         "EVENT_REVIEWER_UNAVAILABLE"
       );
   }
+  const isFinalDosaApproval = decision === "APPROVE" && current.stage === "DOSA_REVIEW" && !next;
+  let budgetPosting = null;
+  if (isFinalDosaApproval) {
+    const sanctionedAmount = resolveSanctionedBudgetAmount(event.budget);
+    if (sanctionedAmount > 0) {
+      try {
+        budgetPosting = await budgets.utilizeEventBudget({
+          societyId: event.societyId,
+          academicSession: event.academicSession,
+          eventId: event._id,
+          amount: sanctionedAmount,
+          reason: `Final DoSA approval budget utilization for Event ${event.eventCode}`,
+          createdBy: userId,
+        });
+      } catch (error) {
+        throw new AppError(
+          `Event budget deduction failed: ${error.message}`,
+          error.statusCode && error.statusCode < 500 ? error.statusCode : 502,
+          "EVENT_BUDGET_DEDUCTION_FAILED"
+        );
+      }
+    }
+  }
   const updated = await Review.findOneAndUpdate(
     { _id: reviewId, status: "PENDING" },
     {
@@ -349,7 +423,7 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
         status:
           decision === "APPROVE"
             ? "APPROVED"
-            : decision === "REQUEST_CHANGES"
+            : decision === "REQUEST_CHANGES" || decision === "BUDGET_RECTIFICATION"
             ? "CHANGES_REQUESTED"
             : "REJECTED",
         decision,
@@ -369,17 +443,8 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
   if (changes.length) {
     event.amendmentRevision += 1;
     for (const change of changes) event.set(change.fieldPath, change.newValue);
-    if (amendment.budget?.items) {
-      event.budget.items.forEach((item, index) => {
-        item.estimatedAmount =
-          Number(item.quantity || 0) * Number(item.estimatedUnitCost || 0);
-        item.order = index;
-      });
-      event.budget.totalEstimated = event.budget.items.reduce(
-        (sum, item) => sum + Number(item.estimatedAmount || 0),
-        0
-      );
-    }
+    if (amendment.budget?.items)
+      event.budget.totalEstimated = recalculateBudgetItems(event.budget.items);
     await Amendment.create({
       eventId: event._id,
       workflowStage: current.stage,
@@ -412,12 +477,25 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
     event.status = "CHANGES_REQUESTED";
     event.currentStage = "CHANGES_REQUESTED";
     event.correctionStage = current.stage;
+  } else if (decision === "BUDGET_RECTIFICATION") {
+    event.status = "BUDGET_RECTIFICATION_REQUIRED";
+    event.currentStage = "BUDGET_RECTIFICATION_REQUIRED";
+    event.correctionStage = current.stage;
   } else if (decision === "REJECT") {
     event.status = "REJECTED";
     event.currentStage = "REJECTED";
   } else if (!next) {
     event.status = "APPROVED";
     event.currentStage = "APPROVED";
+    if (budgetPosting) {
+      event.budget.deductionStatus = "POSTED";
+      event.budget.deductedAmount = budgetPosting.transaction.amount;
+      event.budget.deductedAt = budgetPosting.transaction.createdAt || new Date();
+      event.budget.societyBudgetId = budgetPosting.budget._id;
+      event.budget.budgetTransactionId = budgetPosting.transaction._id;
+    } else {
+      event.budget.deductionStatus = "NOT_REQUIRED";
+    }
   } else {
     event.status = next;
     event.currentStage = next;
@@ -430,23 +508,26 @@ const decide = async ({ userId, reviewId, decision, remarks, amendment }) => {
         : "EVENT_FINAL_APPROVED"
       : decision === "REQUEST_CHANGES"
       ? "EVENT_CHANGES_REQUESTED"
+      : decision === "BUDGET_RECTIFICATION"
+      ? "EVENT_BUDGET_RECTIFICATION_REQUESTED"
       : "EVENT_REJECTED";
   await Audit.create({
     eventId: event._id,
     action,
     actorUserId: userId,
-    metadata: { stage: current.stage, attempt: current.attempt, remarks },
+    metadata: {
+      stage: current.stage,
+      attempt: current.attempt,
+      remarks,
+      ...(budgetPosting
+        ? { budgetTransactionId: String(budgetPosting.transaction._id), deductedAmount: budgetPosting.transaction.amount }
+        : {}),
+    },
   });
-  domainEvents.publish(
-    decision === "APPROVE"
-      ? next
-        ? "EVENT_FORWARDED"
-        : "EVENT_FINAL_APPROVED"
-      : decision === "REQUEST_CHANGES"
-      ? "EVENT_CHANGES_REQUESTED"
-      : "EVENT_REJECTED",
-    { userId, metadata: { eventId: String(event._id), stage: current.stage } }
-  );
+  domainEvents.publish(action, {
+    userId,
+    metadata: { eventId: String(event._id), stage: current.stage },
+  });
   if (next) await assign(event, next, event.revision, nextReviewers);
   return { review: updated, event, history: await history(event._id) };
 };
@@ -456,6 +537,7 @@ const amend = async ({ userId, reviewId, reason, proposal }) => {
   const review = await Review.findOne({
     _id: reviewId,
     status: "PENDING",
+    stage: { $in: workflowStageValues },
   }).lean();
   if (!review)
     throw new AppError(
@@ -521,17 +603,8 @@ const amend = async ({ userId, reviewId, reason, proposal }) => {
     );
   event.amendmentRevision += 1;
   for (const change of changes) event.set(change.fieldPath, change.newValue);
-  if (proposal.budget?.items) {
-    event.budget.items.forEach((item, index) => {
-      item.estimatedAmount =
-        Number(item.quantity || 0) * Number(item.estimatedUnitCost || 0);
-      item.order = index;
-    });
-    event.budget.totalEstimated = event.budget.items.reduce(
-      (sum, item) => sum + Number(item.estimatedAmount || 0),
-      0
-    );
-  }
+  if (proposal.budget?.items)
+    event.budget.totalEstimated = recalculateBudgetItems(event.budget.items);
   await event.save();
   const amendment = await Amendment.create({
     eventId: event._id,
@@ -589,7 +662,7 @@ const saveBudgetReview = async ({ userId, reviewId, items }) => {
     item.recommendedRate = input.recommendedRate === "" || input.recommendedRate == null ? undefined : Number(input.recommendedRate);
     item.reviewRemark = String(input.reviewRemark || "").trim();
   });
-  event.budget.totalEstimated = event.budget.items.reduce((sum, item) => sum + Number(item.estimatedAmount || 0), 0);
+  event.budget.totalEstimated = recalculateBudgetItems(event.budget.items);
   event.budget.totalRecommended = event.budget.items.reduce((sum, item) => sum + Number(item.recommendedAmount || 0), 0);
   event.budget.reviewedAt = new Date();
   event.budget.reviewedByUserId = userId;

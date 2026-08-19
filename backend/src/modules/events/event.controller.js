@@ -30,6 +30,10 @@ module.exports = {
     ok(res, {
       event: await service.submit(req.auth.userId, req.params.eventId),
     }),
+  cancel: async (req, res) =>
+    ok(res, {
+      event: await service.cancel(req.auth.userId, req.params.eventId, req.body.reason),
+    }),
   society: async (req, res) =>
     ok(
       res,

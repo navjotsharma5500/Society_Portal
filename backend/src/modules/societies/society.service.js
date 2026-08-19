@@ -1,10 +1,19 @@
-const mongoose = require("mongoose");
-const AppError = require("../../common/errors/AppError");
-const repository = require("./society.repository");
-const { SOCIETY_STATUSES } = require("./society.constants");
-const { prepareSocietyCode } = require("./societyCode.service");
-const invalidate=require("../../cache/cacheInvalidation");
-const events=require("../../common/events/domainEvent.service");
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require society.service -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const mongoose = timedRequire("mongoose", "mongoose");
+const AppError = timedRequire("AppError", "../../common/errors/AppError");
+const repository = timedRequire("society.repository", "./society.repository");
+const { SOCIETY_STATUSES } = timedRequire("society.constants", "./society.constants");
+const { prepareSocietyCode } = timedRequire("societyCode.service", "./societyCode.service");
+const invalidate = timedRequire("cacheInvalidation", "../../cache/cacheInvalidation");
+const events = timedRequire("domainEvent.service", "../../common/events/domainEvent.service");
 const emit=(eventType,society)=>events.publish(eventType,{metadata:{societyId:String(society._id),societyCode:society.code}});
 
 const assertValidId = (id) => {

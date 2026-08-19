@@ -17,6 +17,8 @@ const EMPTY = {
   uiCapabilities: null,
   membership: null,
 };
+let authBootstrapPromise = null;
+
 const normalize = (data, previous = {}) => {
   const contexts =
       data?.dashboardContexts || data?.availableDashboardContexts || [],
@@ -164,15 +166,30 @@ export function AuthProvider({ children }) {
     };
     window.addEventListener("auth:session-expired", expired);
     window.addEventListener("auth:access-disabled", disabled);
-    authApi.getAuthState()
-      .then((session) => {
-        if (!active) return null;
-        if (session?.authenticated || session?.refreshAvailable) return loadCurrentUser();
-        clearAuth();
-        return null;
-      })
-      .catch(() => clearAuth())
-      .finally(() => active && setAuthLoading(false));
+    if (!authBootstrapPromise) {
+      authBootstrapPromise = authApi.getAuthState()
+        .then(async (session) => {
+          if (session?.authenticated) return loadCurrentUser();
+          if (session?.refreshAvailable) {
+            try {
+              await authApi.refreshSession();
+              return loadCurrentUser();
+            } catch {
+              clearAuth();
+              return null;
+            }
+          }
+          clearAuth();
+          return null;
+        })
+        .catch(() => {
+          clearAuth();
+          return null;
+        });
+    }
+    authBootstrapPromise.finally(() => {
+      if (active) setAuthLoading(false);
+    });
     return () => {
       active = false;
       window.removeEventListener("auth:session-expired", expired);
@@ -184,6 +201,7 @@ export function AuthProvider({ children }) {
     return () => realtimeClient.setAuthenticated(false);
   }, [authenticatedUserId]);
   useEffect(() => {
+    if (!authenticatedUserId) return undefined;
     let refreshPending = false;
     const refresh = () => {
       if (refreshPending) return;
@@ -194,7 +212,7 @@ export function AuthProvider({ children }) {
     const offPermissions = realtimeClient.subscribe(REALTIME_EVENTS.PERMISSIONS_UPDATED, refresh);
     const offProfile = realtimeClient.subscribe(REALTIME_EVENTS.PROFILE_UPDATED, refresh);
     return () => { offContext(); offPermissions(); offProfile(); };
-  }, [loadCurrentUser]);
+  }, [loadCurrentUser, authenticatedUserId]);
   const value = useMemo(
     () => ({
       ...state,

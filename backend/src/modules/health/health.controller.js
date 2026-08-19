@@ -1,8 +1,18 @@
-const mongoose = require("mongoose");
-const environment = require("../../config/environment");
-const { version } = require("../../../package.json");
-const realtime = require("../../realtime/realtimePublisher");
-const redis = require("../../cache/redisClient"), cache = require("../../cache/cacheService");
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require health.controller -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const mongoose = timedRequire("mongoose", "mongoose");
+const environment = timedRequire("environment", "../../config/environment");
+const { version } = timedRequire("package.json", "../../../package.json");
+const realtime = timedRequire("realtimePublisher", "../../realtime/realtimePublisher");
+const redis = timedRequire("redisClient", "../../cache/redisClient"),
+  cache = timedRequire("cacheService", "../../cache/cacheService");
 
 const databaseStates = {
   0: "disconnected",

@@ -12,7 +12,16 @@ const mongoose = require("mongoose"),
   authz = require("../authorization/authorization.service"),
   events = require("../../common/events/domainEvent.service"),
   workflow = require("./eventWorkflow.service"),
-  { MODES, SPEAKER_STATUSES, WORKFLOW_STAGES, LIVE_EVENT_REQUEST_STATUSES } = require("./event.constants"),
+  societyBudgets = require("../societyBudgets/societyBudget.service"),
+  Amendment = require("./eventAmendment.model"),
+  {
+    MODES,
+    SPEAKER_STATUSES,
+    WORKFLOW_STAGES,
+    LIVE_EVENT_REQUEST_STATUSES,
+    amendableFields,
+    diffFields,
+  } = require("./event.constants"),
   settings = require("../portalSettings/portalSetting.service");
 const fail = (message, status, code, fields) => {
     const error = new AppError(message, status, code);
@@ -300,6 +309,31 @@ const liveRequestUsage = async (userId, excludeEventId) => {
   const [limit, current] = await Promise.all([settings.getValue("event.max_live_requests_per_general_secretary"), Event.countDocuments({ createdByUserId: userId, status: { $in: LIVE_EVENT_REQUEST_STATUSES }, ...(excludeEventId ? { _id: { $ne: excludeEventId } } : {}) })]);
   return { limit, current, available: current < limit };
 };
+const publicStatusValues = Object.freeze([
+  "DRAFT",
+  ...LIVE_EVENT_REQUEST_STATUSES,
+  "CHANGES_REQUESTED",
+  "BUDGET_RECTIFICATION_REQUIRED",
+  "REJECTED",
+  "CANCELLED",
+  "APPROVED",
+]);
+const emptyPage = (page = 1, limit = 20) => ({
+  items: [],
+  pagination: { page, limit, totalItems: 0, totalPages: 0 },
+});
+const removedAdminReviewStage = ["ADMIN", "REVIEW"].join("_");
+const normalizeEventWorkflowStage = (stage) =>
+  stage === removedAdminReviewStage ? WORKFLOW_STAGES.DOSA_REVIEW : stage;
+const publicEventWorkflow = (event) => {
+  if (!event) return event;
+  return {
+    ...event,
+    status: normalizeEventWorkflowStage(event.status),
+    currentStage: normalizeEventWorkflowStage(event.currentStage),
+    correctionStage: normalizeEventWorkflowStage(event.correctionStage),
+  };
+};
 const audit = (event, action, actor, assignment, metadata = {}) =>
   Audit.create({
     eventId: event._id,
@@ -353,13 +387,29 @@ const owned = async (userId, id, permission = "event.view") => {
   await accessContext(userId, event.societyId, permission);
   return event;
 };
+const rectificationLockedFields = amendableFields.filter((field) => field !== "budget");
 const update = async (userId, id, data) => {
   const event = await owned(userId, id, "event.edit_own");
   if (
-    !["DRAFT", "CHANGES_REQUESTED"].includes(event.status) ||
+    !["DRAFT", "CHANGES_REQUESTED", "BUDGET_RECTIFICATION_REQUIRED"].includes(event.status) ||
     String(event.createdByUserId) !== String(userId)
   )
     fail("Submitted event is read-only", 409, "EVENT_NOT_EDITABLE");
+  const isRectification = event.status === "BUDGET_RECTIFICATION_REQUIRED";
+  const before = event.toObject();
+  if (isRectification) {
+    const outOfScope = diffFields(before, data, rectificationLockedFields);
+    if (outOfScope.length)
+      fail(
+        "Only budget details may be edited during budget rectification.",
+        400,
+        "EVENT_RECTIFICATION_SCOPE_VIOLATION",
+        outOfScope.map((change) => ({
+          field: change.fieldPath,
+          message: "This field cannot be changed during budget rectification.",
+        }))
+      );
+  }
   validateDraft(data);
   const protectedPoc = event.poc?.toObject
     ? event.poc.toObject()
@@ -374,11 +424,27 @@ const update = async (userId, id, data) => {
   Object.assign(event, normalized);
   if (!event.createdByAssignmentId && event.createdFromRoleAssignmentId)
     event.createdByAssignmentId = event.createdFromRoleAssignmentId;
+  // Compare against the authoritative, post-normalize budget (never the raw request payload) so the
+  // recorded diff — and its human-readable summary — always reflects the real recalculated totals.
+  const budgetChange = isRectification ? diffFields(before, { budget: event.toObject().budget }, ["budget"])[0] || null : null;
+  if (budgetChange) event.amendmentRevision += 1;
   await event.save();
+  if (budgetChange)
+    await Amendment.create({
+      eventId: event._id,
+      workflowStage: "BUDGET_RECTIFICATION_REQUIRED",
+      revisionNumber: event.amendmentRevision,
+      changedByUserId: userId,
+      changedByRoleCode: "STUDENT",
+      reason: "Student revised the budget following a DoSA Staff rectification request.",
+      changes: [budgetChange],
+    });
   await audit(
     event,
     event.status === "DRAFT"
       ? "EVENT_DRAFT_UPDATED"
+      : isRectification
+      ? "EVENT_BUDGET_RECTIFIED"
       : "EVENT_CORRECTION_UPDATED",
     userId,
     event.createdFromRoleAssignmentId
@@ -442,7 +508,7 @@ const submissionFields = (event) => {
 };
 const submit = async (userId, id) => {
   const event = await owned(userId, id, "event.submit");
-  if (!["DRAFT", "CHANGES_REQUESTED"].includes(event.status))
+  if (!["DRAFT", "CHANGES_REQUESTED", "BUDGET_RECTIFICATION_REQUIRED"].includes(event.status))
     return populate(Event.findById(event._id)).lean();
   if (String(event.createdByUserId) !== String(userId))
     fail(
@@ -462,10 +528,28 @@ const submit = async (userId, id) => {
     );
   const usage = await liveRequestUsage(userId, event._id);
   if (!usage.available) { const error = new AppError("You have reached the maximum number of active event requests allowed at one time.", 409, "EVENT_LIVE_REQUEST_LIMIT_REACHED"); error.metadata = { limit: usage.limit, current: usage.current }; throw error; }
-  const stage =
-    event.status === "CHANGES_REQUESTED"
-      ? event.correctionStage
-      : WORKFLOW_STAGES.FACULTY_REVIEW;
+  const requestedAmount = Number(event.budget?.totalEstimated || 0);
+  if (requestedAmount > 0) {
+    let availableAmount = 0;
+    try {
+      availableAmount = (await societyBudgets.getCurrentBudget(event.societyId, currentSession.name)).availableAmount;
+    } catch (error) {
+      if (error?.code !== "BUDGET_NOT_FOUND") throw error;
+    }
+    if (availableAmount <= 0)
+      fail(
+        "Your society currently has no available budget for this academic session.",
+        409,
+        "EVENT_SOCIETY_BUDGET_UNAVAILABLE"
+      );
+  }
+  const isBudgetRectification = event.status === "BUDGET_RECTIFICATION_REQUIRED";
+  // Any Student revision — whether from generic Request Changes or Budget Rectification, and
+  // regardless of which stage requested it — is a materially revised proposal. It always restarts
+  // the full approval chain from FACULTY_REVIEW; an earlier reviewer's approval of the prior figures
+  // must never be treated as approval of the revision. correctionStage is retained only as an audit
+  // trail of who requested the change, never as a resumption shortcut.
+  const stage = WORKFLOW_STAGES.FACULTY_REVIEW;
   const reviewers = await workflow.resolveReviewers(stage, event.societyId);
   if (!reviewers.length)
     fail(
@@ -480,7 +564,24 @@ const submit = async (userId, id) => {
         },
       ]
     );
-  if (event.status === "CHANGES_REQUESTED") event.revision += 1;
+  const isResubmission = event.status === "CHANGES_REQUESTED" || isBudgetRectification;
+  if (isResubmission) event.revision += 1;
+  if (isResubmission) {
+    // Every resubmission restarts the whole chain from President, so any DoSA Staff recommendation
+    // left over from the attempt being superseded is stale — it was against a proposal the Student
+    // has since revised (or a correction request unrelated to budget) and must not silently carry
+    // forward as if it were a recommendation on the new attempt. It remains in that old attempt's
+    // history via the Event's amendment/review trail; only the CURRENT working fields are reset here.
+    event.budget.items.forEach((item) => {
+      item.recommendedAmount = undefined;
+      item.recommendedQuantity = undefined;
+      item.recommendedRate = undefined;
+      item.reviewRemark = undefined;
+    });
+    event.budget.totalRecommended = 0;
+    event.budget.reviewedAt = undefined;
+    event.budget.reviewedByUserId = undefined;
+  }
   event.status = stage;
   event.currentStage = stage;
   event.correctionStage = undefined;
@@ -514,9 +615,38 @@ const submit = async (userId, id) => {
   await workflow.assign(event, stage, event.revision, reviewers);
   return get(userId, event._id);
 };
+const cancel = async (userId, id, reason) => {
+  const event = await owned(userId, id, "event.edit_own");
+  if (
+    event.status !== "BUDGET_RECTIFICATION_REQUIRED" ||
+    String(event.createdByUserId) !== String(userId)
+  )
+    fail("This event cannot be cancelled", 409, "EVENT_NOT_CANCELLABLE");
+  event.status = "CANCELLED";
+  event.currentStage = "CANCELLED";
+  event.correctionStage = undefined;
+  await event.save();
+  await audit(event, "EVENT_CANCELLED", userId, event.createdFromRoleAssignmentId, {
+    reason: String(reason || "").trim() || undefined,
+  });
+  events.publish("EVENT_CANCELLED", {
+    userId,
+    metadata: { eventId: String(event._id), eventCode: event.eventCode, societyId: String(event.societyId) },
+  });
+  return populate(Event.findById(event._id)).lean();
+};
 const get = async (userId, id) => {
-  const event = await owned(userId, id, "event.view");
-  const visibility = await authz.hasPermission({ userId, societyId: event.societyId, permissionCode: "event.view" });
+  if (!oid(id)) fail("Event not found", 404, "EVENT_NOT_FOUND");
+  const event = await Event.findById(id);
+  if (!event) fail("Event not found", 404, "EVENT_NOT_FOUND");
+  const globalAccess = await authz.hasPermission({ userId, permissionCode: "event_admin.view_all" });
+  let visibility;
+  if (globalAccess.allowed) {
+    visibility = globalAccess;
+  } else {
+    await accessContext(userId, event.societyId, "event.view");
+    visibility = await authz.hasPermission({ userId, societyId: event.societyId, permissionCode: "event.view" });
+  }
   if (
     event.status === "DRAFT" &&
     String(event.createdByUserId) !== String(userId) &&
@@ -527,7 +657,7 @@ const get = async (userId, id) => {
   if (event.status === "DRAFT")
     value.facultyReviewContext = await facultyContext(event.societyId);
   return {
-    ...value,
+    ...publicEventWorkflow(value),
     isCreator: String(event.createdByUserId) === String(userId),
     reviewHistory: await workflow.history(event._id),
     amendmentHistory: await workflow.amendments(event._id),
@@ -535,6 +665,10 @@ const get = async (userId, id) => {
 };
 const list = async (userId, societyId, filters = {}) => {
   await societyReadAccess(userId, societyId);
+  const page = Number(filters.page || 1),
+    limit = Math.min(100, Number(filters.limit || 20));
+  if (filters.status && !publicStatusValues.includes(filters.status))
+    return emptyPage(page, limit);
   const query = { societyId };
   if (filters.status) query.status = filters.status;
   else if (String(filters.excludeDrafts) === "true")
@@ -546,9 +680,7 @@ const list = async (userId, societyId, filters = {}) => {
     };
   if (String(filters.excludeDrafts) !== "true")
     query.$or = [{ status: { $ne: "DRAFT" } }, { createdByUserId: userId }];
-  const page = Number(filters.page || 1),
-    limit = Math.min(100, Number(filters.limit || 20)),
-    [items, totalItems] = await Promise.all([
+  const [items, totalItems] = await Promise.all([
       populate(Event.find(query))
         .sort({ startDate: 1, createdAt: -1 })
         .skip((page - 1) * limit)
@@ -557,7 +689,7 @@ const list = async (userId, societyId, filters = {}) => {
       Event.countDocuments(query),
     ]);
   return {
-    items,
+    items: items.map(publicEventWorkflow),
     pagination: {
       page,
       limit,
@@ -567,6 +699,9 @@ const list = async (userId, societyId, filters = {}) => {
   };
 };
 const listAll = async (filters = {}) => {
+  const page = Number(filters.page || 1), limit = Math.min(100, Number(filters.limit || 20));
+  if (filters.status && !publicStatusValues.includes(filters.status))
+    return emptyPage(page, limit);
   const query = {};
   if (filters.societyId && oid(filters.societyId)) query.societyId = filters.societyId;
   if (filters.status) query.status = filters.status;
@@ -583,12 +718,11 @@ const listAll = async (filters = {}) => {
       { title: { $regex: escaped, $options: "i" } },
     ];
   }
-  const page = Number(filters.page || 1), limit = Math.min(100, Number(filters.limit || 20));
   const [items, totalItems] = await Promise.all([
     populate(Event.find(query)).sort({ startDate: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Event.countDocuments(query),
   ]);
-  return { items, pagination: { page, limit, totalItems, totalPages: Math.ceil(totalItems / limit) } };
+  return { items: items.map(publicEventWorkflow), pagination: { page, limit, totalItems, totalPages: Math.ceil(totalItems / limit) } };
 };
 module.exports = {
   proposalDateFields,
@@ -596,6 +730,7 @@ module.exports = {
   create,
   update,
   submit,
+  cancel,
   get,
   list,
   listAll,

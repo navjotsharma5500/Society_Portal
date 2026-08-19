@@ -1,6 +1,15 @@
-const societyService = require("./society.service");
-const societyTeamService = require("./societyTeam.service");
-const teamManagement = require("./societyTeamManagement.service");
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require society.controller -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const societyService = timedRequire("society.service", "./society.service");
+const societyTeamService = timedRequire("societyTeam.service", "./societyTeam.service");
+const teamManagement = timedRequire("societyTeamManagement.service", "./societyTeamManagement.service");
 
 const createSociety = async (req, res) => {
   const society = await societyService.createSociety(req.body);

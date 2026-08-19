@@ -1,4 +1,26 @@
-const ExcelJS=require("exceljs"),mongoose=require("mongoose"),AppError=require("../../common/errors/AppError"),Society=require("./society.model"),User=require("../users/user.model"),Student=require("../studentMaster/studentMaster.model"),Role=require("../roles/role.model"),Assignment=require("../userRoleAssignments/userRoleAssignment.model"),Membership=require("../societyMemberships/societyMembership.model"),AcademicSession=require("../academicSessions/academicSession.model"),Session=require("./societyTeamImportSession.model"),assignments=require("../userRoleAssignments/userRoleAssignment.service"),lifecycle=require("../membershipLifecycle/membershipLifecycle.service"),events=require("../../common/events/domainEvent.service");
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require societyTeamManagement.service -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const ExcelJS = timedRequire("exceljs", "exceljs"),
+  mongoose = timedRequire("mongoose", "mongoose"),
+  AppError = timedRequire("AppError", "../../common/errors/AppError"),
+  Society = timedRequire("society.model", "./society.model"),
+  User = timedRequire("user.model", "../users/user.model"),
+  Student = timedRequire("studentMaster.model", "../studentMaster/studentMaster.model"),
+  Role = timedRequire("role.model", "../roles/role.model"),
+  Assignment = timedRequire("userRoleAssignment.model", "../userRoleAssignments/userRoleAssignment.model"),
+  Membership = timedRequire("societyMembership.model", "../societyMemberships/societyMembership.model"),
+  AcademicSession = timedRequire("academicSession.model", "../academicSessions/academicSession.model"),
+  Session = timedRequire("societyTeamImportSession.model", "./societyTeamImportSession.model"),
+  assignments = timedRequire("userRoleAssignment.service", "../userRoleAssignments/userRoleAssignment.service"),
+  lifecycle = timedRequire("membershipLifecycle.service", "../membershipLifecycle/membershipLifecycle.service"),
+  events = timedRequire("domainEvent.service", "../../common/events/domainEvent.service");
 const roleQuery={status:"ACTIVE",isAssignable:true,scopeType:{$in:["SOCIETY","BOTH"]},code:{$ne:"SUPER_ADMIN"}},escape=value=>String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),day=value=>{if(!value)return null;const d=value instanceof Date?value:new Date(value);return Number.isNaN(d.getTime())?null:d},text=(row,col)=>String(row.getCell(col).text||"").trim(),active=assignments.activeWindow(new Date());
 const assertSociety=async id=>{if(!mongoose.Types.ObjectId.isValid(id))throw new AppError("Society not found",404,"SOCIETY_NOT_FOUND");const society=await Society.findById(id);if(!society)throw new AppError("Society not found",404,"SOCIETY_NOT_FOUND");return society};
 const roles=()=>Role.find(roleQuery).select("name code rank category scopeType isAssignable").sort({rank:-1,name:1}).lean();

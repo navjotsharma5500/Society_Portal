@@ -1,9 +1,19 @@
 const express = require("express");
-const controller = require("./society.controller");
-const validation = require("./society.validation");
-const { authenticateSession } = require("../auth/auth.middleware");
-const { requirePermission } = require("../authorization/authorization.middleware");
-const multer=require("multer"),upload=multer({storage:multer.memoryStorage(),limits:{fileSize:15*1024*1024}});
+const timedRequire = (label, path) => {
+  const started = process.hrtime.bigint();
+  const result = require(path);
+  if (process.env.NODE_ENV === "development") {
+    const ms = Math.round(Number(process.hrtime.bigint() - started) / 1e6);
+    if (ms >= 50) console.info(`[startup] require society.routes -> ${label}: ${ms}ms`);
+  }
+  return result;
+};
+const controller = timedRequire("society.controller", "./society.controller");
+const validation = timedRequire("society.validation", "./society.validation");
+const { authenticateSession } = timedRequire("auth.middleware", "../auth/auth.middleware");
+const { requirePermission } = timedRequire("authorization.middleware", "../authorization/authorization.middleware");
+const multer = timedRequire("multer", "multer"),
+  upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 const router = express.Router();
 router.use(authenticateSession);

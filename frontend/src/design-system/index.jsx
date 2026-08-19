@@ -149,6 +149,9 @@ export const StatusChip = ({ status }) => (
         pending: "warning",
         inactive: "neutral",
         rejected: "danger",
+        cancelled: "neutral",
+        changes_requested: "warning",
+        budget_rectification_required: "warning",
       }[status.toLowerCase()] || "info"
     }
   >

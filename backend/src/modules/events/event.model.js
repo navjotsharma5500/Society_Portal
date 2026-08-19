@@ -142,6 +142,11 @@ const schema = new mongoose.Schema(
       totalRecommended: { type: Number, min: 0, default: 0 },
       reviewedAt: Date,
       reviewedByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      deductionStatus: { type: String, enum: ["POSTED", "NOT_REQUIRED"] },
+      deductedAmount: { type: Number, min: 0 },
+      deductedAt: Date,
+      societyBudgetId: { type: mongoose.Schema.Types.ObjectId, ref: "SocietyBudget" },
+      budgetTransactionId: { type: mongoose.Schema.Types.ObjectId, ref: "SocietyBudgetTransaction" },
     },
     poc: {
       studentMasterId: {

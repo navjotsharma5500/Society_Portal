@@ -130,6 +130,63 @@ const utilizeReservedBudget = ({ budgetId, amount, referenceType, referenceId, r
   { transactionType: TRANSACTION_TYPES.UTILIZE, amount, direction: DIRECTIONS.DEBIT, referenceType, referenceId, reason, createdBy },
   (budget) => ({ allocatedAmount: budget.allocatedAmount, reservedAmount: budget.reservedAmount - amount, utilizedAmount: budget.utilizedAmount + amount })); };
 
+const EVENT_REFERENCE_TYPE = "EVENT";
+
+const findEventUtilizationTransaction = (eventId, session) =>
+  repository.findTransactionByReference(EVENT_REFERENCE_TYPE, eventId, TRANSACTION_TYPES.UTILIZE, session);
+
+// Direct utilization posting for a final-approval financial event (e.g. Event budget sanction) that has no
+// prior reservation. Idempotent: a unique (referenceType, referenceId, transactionType) index on the ledger
+// guarantees at most one UTILIZE transaction is ever posted per reference, even under concurrent retries.
+const utilizeEventBudget = async ({ societyId, academicSession, eventId, amount, reason, createdBy }) => {
+  assertSocietyId(societyId);
+  if (!isObjectId(eventId)) throw new AppError("Invalid event ID", 400, "VALIDATION_ERROR");
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0)
+    throw new AppError("Event sanctioned budget amount must be greater than zero", 400, "INVALID_BUDGET_AMOUNT");
+
+  // Bounded retry: a concurrent request racing us to the same reference can either (a) win the unique-index
+  // insert first, surfacing as a duplicate-key error here, or (b) win the optimistic-lock update on the budget
+  // document first, surfacing as BUDGET_CONFLICT. Either way, re-checking for an existing transaction after the
+  // conflict is what makes this safe under real concurrency — not just the happy-path pre-check above.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await findEventUtilizationTransaction(eventId);
+    if (existing) return { budget: await repository.findById(existing.budgetId), transaction: existing, alreadyPosted: true };
+
+    try {
+      return await runAtomic(async (session) => {
+        const budget = await repository.findBySocietySession(societyId, academicSession, session);
+        if (!budget) throw new AppError("No annual budget is configured for this society and academic session", 404, "BUDGET_NOT_FOUND");
+        if (budget.status === BUDGET_STATUSES.CLOSED) throw new AppError("Budget is closed", 409, "BUDGET_CLOSED");
+        const utilizedAmount = budget.utilizedAmount + amount;
+        const availableAmount = budget.allocatedAmount - budget.reservedAmount - utilizedAmount;
+        if (availableAmount < 0) throw insufficient();
+        const filter = { _id: budget._id, status: { $ne: BUDGET_STATUSES.CLOSED }, allocatedAmount: budget.allocatedAmount, reservedAmount: budget.reservedAmount, utilizedAmount: budget.utilizedAmount };
+        const after = await repository.updateMatching(filter, { $set: { utilizedAmount, availableAmount } }, session);
+        if (!after) throw new AppError("Budget changed concurrently; retry the operation", 409, "BUDGET_CONFLICT");
+        let transaction;
+        try {
+          transaction = await repository.createTransaction(transactionData(budget, after, {
+            transactionType: TRANSACTION_TYPES.UTILIZE, amount, direction: DIRECTIONS.DEBIT,
+            referenceType: EVENT_REFERENCE_TYPE, referenceId: eventId, reason, createdBy,
+          }), session);
+        } catch (error) {
+          if (!session) await repository.updateMatching({ _id: after._id, allocatedAmount: after.allocatedAmount, reservedAmount: after.reservedAmount, utilizedAmount: after.utilizedAmount }, { $set: { utilizedAmount: budget.utilizedAmount, availableAmount: budget.availableAmount } });
+          throw error;
+        }
+        return { budget: after, transaction, alreadyPosted: false };
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        const transaction = await findEventUtilizationTransaction(eventId);
+        if (transaction) return { budget: await repository.findById(transaction.budgetId), transaction, alreadyPosted: true };
+        throw error;
+      }
+      if (error?.code === "BUDGET_CONFLICT" && attempt < 4) continue;
+      throw error;
+    }
+  }
+};
+
 const listBudgets = async (filters) => {
   const query = {};
   if (filters.societyId) { assertSocietyId(filters.societyId); query.societyId = filters.societyId; }
@@ -143,4 +200,4 @@ const getCurrentBudget = async (societyId, academicSession) => { assertSocietyId
 const listTransactions = async (budgetId, filters) => { await getBudget(budgetId); const query = { budgetId }; if (filters.transactionType) query.transactionType = filters.transactionType; if (filters.dateFrom || filters.dateTo) { query.createdAt = {}; if (filters.dateFrom) query.createdAt.$gte = filters.dateFrom; if (filters.dateTo) query.createdAt.$lte = filters.dateTo; } const { items, totalItems } = await repository.findTransactions(query, filters.page, filters.limit); return { items, pagination: { page: filters.page, limit: filters.limit, totalItems, totalPages: Math.ceil(totalItems / filters.limit) } }; };
 const getSummary = async (academicSession) => ({ academicSession: academicSession || null, totalAllocated: 0, totalReserved: 0, totalUtilized: 0, totalAvailable: 0, activeBudgets: 0, closedBudgets: 0, ...(await repository.summarize(academicSession) || {}), _id: undefined });
 
-module.exports = { requireCurrentSession, createAnnualBudget, adjustBudget, setAllocation, manualAdjustment, closeBudget, listBudgets, getBudget, getCurrentBudget, listTransactions, getSummary, reserveBudget, releaseReservedBudget, utilizeReservedBudget };
+module.exports = { requireCurrentSession, createAnnualBudget, adjustBudget, setAllocation, manualAdjustment, closeBudget, listBudgets, getBudget, getCurrentBudget, listTransactions, getSummary, reserveBudget, releaseReservedBudget, utilizeReservedBudget, utilizeEventBudget, findEventUtilizationTransaction };

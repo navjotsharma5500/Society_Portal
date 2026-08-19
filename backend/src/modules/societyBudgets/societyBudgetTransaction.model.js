@@ -20,5 +20,9 @@ const transactionSchema = new mongoose.Schema({
 
 transactionSchema.index({ budgetId: 1, createdAt: -1 });
 transactionSchema.index({ societyId: 1, academicSession: 1, createdAt: -1 });
+transactionSchema.index(
+  { referenceType: 1, referenceId: 1, transactionType: 1 },
+  { unique: true, partialFilterExpression: { referenceId: { $exists: true }, referenceType: { $exists: true } }, name: "unique_reference_transaction_type" }
+);
 
 module.exports = mongoose.model("SocietyBudgetTransaction", transactionSchema);

@@ -6,6 +6,7 @@ import {
   useParams,
 } from "react-router-dom";
 import {
+  cancelEvent,
   createEvent,
   getEvent,
   getLiveEventRequestUsage,
@@ -49,9 +50,11 @@ const statusLabel = (status) =>
     ASSISTANT_REVIEW: "Pending Assistant Review",
     DOSA_STAFF_REVIEW: "Pending DoSA Staff Review",
     ADOSA_REVIEW: "Pending ADoSA Review",
-    ADMIN_REVIEW: "Pending Admin Review",
+    DOSA_REVIEW: "Pending DoSA Final Approval",
     CHANGES_REQUESTED: "Changes Requested",
+    BUDGET_RECTIFICATION_REQUIRED: "Budget Rectification Required",
     REJECTED: "Rejected",
+    CANCELLED: "Cancelled",
     APPROVED: "Approved",
     DRAFT: "Draft",
   }[status] || status?.replaceAll("_", " "));
@@ -221,6 +224,12 @@ export function EventEditorPage() {
         Your active society role cannot create events.
       </p>
     );
+  const budgetOnly = event?.status === "BUDGET_RECTIFICATION_REQUIRED";
+  const rectificationRemark = budgetOnly
+    ? [...(event?.reviewHistory || [])]
+        .reverse()
+        .find((x) => x.decision === "BUDGET_RECTIFICATION")?.remarks
+    : null;
   return (
     <div className="events-page">
       <header className="events-heading">
@@ -243,6 +252,14 @@ export function EventEditorPage() {
           )}
         </div>
       )}
+      {budgetOnly && (
+        <section className="event-card event-warning">
+          <h2>Budget Rectification Requested</h2>
+          <p>DoSA Staff has asked you to revise this Event's budget before it can be resubmitted.</p>
+          {rectificationRemark && <p>Reason: {rectificationRemark}</p>}
+          <p>Only the budget below may be changed. Resubmitting will restart approval from the Faculty President.</p>
+        </section>
+      )}
       <section className="event-card">
         <div className="event-grid">
           <Value label="Society">
@@ -254,34 +271,38 @@ export function EventEditorPage() {
           </Value>
         </div>
       </section>
-      <div id="event-details">
-        <div
-          id="event-schedule"
-          className={
-            fieldErrors.some((item) =>
-              ["event-details", "event-schedule"].includes(
-                sectionForField(item.field)
+      {!budgetOnly && (
+        <div id="event-details">
+          <div
+            id="event-schedule"
+            className={
+              fieldErrors.some((item) =>
+                ["event-details", "event-schedule"].includes(
+                  sectionForField(item.field)
+                )
               )
+                ? "event-card-invalid"
+                : ""
+            }
+          >
+            <EventDetailsSection form={form} set={set} />
+          </div>
+        </div>
+      )}
+      {!budgetOnly && (
+        <div
+          id="event-annexure"
+          className={
+            fieldErrors.some(
+              (item) => sectionForField(item.field) === "event-annexure"
             )
               ? "event-card-invalid"
               : ""
           }
         >
-          <EventDetailsSection form={form} set={set} />
+          <EventAnnexureSection form={form} set={set} />
         </div>
-      </div>
-      <div
-        id="event-annexure"
-        className={
-          fieldErrors.some(
-            (item) => sectionForField(item.field) === "event-annexure"
-          )
-            ? "event-card-invalid"
-            : ""
-        }
-      >
-        <EventAnnexureSection form={form} set={set} />
-      </div>
+      )}
       <div
         id="event-budget"
         className={
@@ -292,7 +313,7 @@ export function EventEditorPage() {
             : ""
         }
       >
-        <EventPlanningSection form={form} set={set} />
+        <EventPlanningSection form={form} set={set} budgetOnly={budgetOnly} />
       </div>
       <div id="event-faculty">
         <EventGovernanceSection event={event} />
@@ -493,17 +514,14 @@ export function EventDetailPage({ review = false }) {
           {event.amendmentHistory.map((amendment) => (
             <section key={amendment._id}>
               <h3>
-                {amendment.changedByRoleCode.replaceAll("_", " ")} revised the
-                proposal
+                {amendment.changedByRoleCode === "STUDENT"
+                  ? "You revised"
+                  : `${amendment.changedByRoleCode.replaceAll("_", " ")} revised`}{" "}
+                the proposal
               </h3>
               <p>Reason: {amendment.reason}</p>
-              {amendment.changes.map((change) => (
-                <p key={change.fieldPath}>
-                  <b>{change.fieldPath.replaceAll(".", " ")}</b>
-                  <br />
-                  {JSON.stringify(change.oldValue)} →{" "}
-                  {JSON.stringify(change.newValue)}
-                </p>
+              {(amendment.summary || amendment.changes.map((c) => `${c.fieldPath.replaceAll(".", " ")} was updated.`)).map((line, i) => (
+                <p key={i}>{line}</p>
               ))}
             </section>
           ))}
@@ -526,7 +544,24 @@ export function EventDetailPage({ review = false }) {
             ))}
         </section>
       )}
-      {review && ["DRAFT", "CHANGES_REQUESTED"].includes(event.status) && (
+      {event.status === "BUDGET_RECTIFICATION_REQUIRED" && (
+        <section className="event-card">
+          <h2>Budget Rectification Requested</h2>
+          {[...(event.reviewHistory || [])]
+            .reverse()
+            .filter((x) => x.decision === "BUDGET_RECTIFICATION")
+            .slice(0, 1)
+            .map((x) => (
+              <div key={x._id}>
+                <p>DoSA Staff has asked you to revise this Event's budget.</p>
+                <p>Reason: {x.remarks}</p>
+              </div>
+            ))}
+          <p>Resubmitting will restart approval from the Faculty President.</p>
+        </section>
+      )}
+      {review &&
+        ["DRAFT", "CHANGES_REQUESTED", "BUDGET_RECTIFICATION_REQUIRED"].includes(event.status) && (
         <div className="event-actions">
           <Link
             className="event-secondary"
@@ -540,14 +575,27 @@ export function EventDetailPage({ review = false }) {
           </button>
         </div>
       )}
-      {!review && event.isCreator && event.status === "CHANGES_REQUESTED" && (
+      {!review &&
+        event.isCreator &&
+        ["CHANGES_REQUESTED", "BUDGET_RECTIFICATION_REQUIRED"].includes(event.status) && (
         <div className="event-actions">
           <Link
             className="event-primary"
             to={`/student/events/${eventId}/edit`}
           >
-            Correct Event
+            {event.status === "BUDGET_RECTIFICATION_REQUIRED" ? "Rectify Budget" : "Correct Event"}
           </Link>
+          {event.status === "BUDGET_RECTIFICATION_REQUIRED" && (
+            <button
+              className="event-secondary"
+              onClick={async () => {
+                if (!window.confirm("Cancel this Event request? This cannot be undone.")) return;
+                setEvent(await cancelEvent(eventId));
+              }}
+            >
+              Cancel Event
+            </button>
+          )}
         </div>
       )}
     </div>

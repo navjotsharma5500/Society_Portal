@@ -7,7 +7,14 @@ const findById = (id, session) => {
   const query = SocietyBudget.findById(id);
   return session ? query.session(session) : query;
 };
-const findBySocietySession = (societyId, academicSession) => SocietyBudget.findOne({ societyId, academicSession });
+const findBySocietySession = (societyId, academicSession, session) => {
+  const query = SocietyBudget.findOne({ societyId, academicSession });
+  return session ? query.session(session) : query;
+};
+const findTransactionByReference = (referenceType, referenceId, transactionType, session) => {
+  const query = SocietyBudgetTransaction.findOne({ referenceType, referenceId, transactionType });
+  return session ? query.session(session) : query;
+};
 const findAll = async (filter, page, limit) => {
   const skip = (page - 1) * limit;
   const [items, totalItems] = await Promise.all([
@@ -36,4 +43,4 @@ const summarize = async (academicSession) => {
   return summary;
 };
 
-module.exports = { createBudget, createTransaction, findById, findBySocietySession, findAll, updateMatching, findTransactions, summarize };
+module.exports = { createBudget, createTransaction, findById, findBySocietySession, findTransactionByReference, findAll, updateMatching, findTransactions, summarize };

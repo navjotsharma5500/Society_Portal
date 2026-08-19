@@ -47,3 +47,8 @@ export const navigationItems = [
   { label: "Notifications", icon: Bell },
   { label: "Profile", to: "/admin/profile", icon: CircleUserRound },
 ];
+export const dosaNavigationItems = [
+  { label: "Dashboard", to: "/dosa/dashboard", icon: House, permissionKey: "dashboard.admin.view" },
+  { label: "Event Approvals", to: "/dosa/events", icon: CalendarDays, permissionKey: "event.review.queue.view" },
+  { label: "Profile", to: "/dosa/profile", icon: CircleUserRound },
+];
