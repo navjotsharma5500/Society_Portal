@@ -8,7 +8,7 @@ import "./student-home.css";
 
 const hasPermission = (context, code) => (context?.permissions || []).some((item) => (item.code || item) === code);
 export default function StudentHomePage() {
-  const auth = useAuth(), navigate = useNavigate(), { selectedContext } = useOutletContext(), data = useStudentPortalData();
+  const auth = useAuth(), navigate = useNavigate(), { selectedContext } = useOutletContext(), authReady = !auth.authLoading && !auth.contextLoading && Boolean(auth.user?.id), data = useStudentPortalData({ enabled: authReady });
   if (data.loading) return <div className="student-home-loading"><Skeleton lines={8} /></div>;
   if (data.error) return <EmptyState icon={AlertCircle} title="Dashboard unavailable" description={data.error} action={<Button variant="outline" onClick={data.refresh}>Try again</Button>} />;
   const pendingItems = data.requests.filter((x) => ["SUBMITTED", "PENDING", "ASSIGNED"].includes(x.status)), attentionRequests = data.requests.filter((x) => x.status === "CLARIFICATION_REQUESTED"), attentionClaims = data.claims.filter((x) => ["CHANGES_REQUESTED", "RESUBMISSION_ALLOWED"].includes(x.status)), attention = attentionRequests.length + attentionClaims.length, hour = new Date().getHours(), greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening", canCreateEvent = hasPermission(selectedContext, "event.create"), roles = [...new Set((auth.activeSocietyContexts || []).map((item) => item.roleName).filter(Boolean))];

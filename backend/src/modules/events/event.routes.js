@@ -18,6 +18,10 @@ router.post("/reviews/:reviewId/amend", c.amend);
 router.put("/reviews/:reviewId/budget", c.saveBudgetReview);
 router.get("/society/:societyId", v.page, c.society);
 router.post("/", v.clean, c.create);
+// Must be registered before "/:eventId" — otherwise Express would treat "proposal-context" as an
+// :eventId route param and this would never be reached. Authorization is Society-scoped
+// (event.create via accessContext in the service), not a GLOBAL requirePermission gate here.
+router.get("/proposal-context", c.proposalContext);
 router.get("/:eventId", c.get);
 router.patch("/:eventId", v.clean, c.update);
 router.post("/:eventId/submit", c.submit);

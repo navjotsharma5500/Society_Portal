@@ -198,7 +198,7 @@ export const router = createBrowserRouter([
       { path: "dashboard", element: <WorkspaceDashboardPage title="ADoSA" /> },
       { path: "approvals", element: <ApprovalCenterPage /> },
       { path: "events", element: <EventBrowserPage basePath="/adosa/events" title="ADoSA Events" /> },
-      { path: "events/:eventId", element: <AdministrativeEventDetailsPage /> },
+      { path: "events/:eventId", element: <ReviewerEventDetailPage /> },
       { path: "societies", element: <SocietyBrowserPage basePath="/adosa/societies" /> },
       { path: "societies/:societyId", element: <SocietyReadPage /> },
       { path: "students", element: <StudentBrowserPage basePath="/adosa/students" /> },

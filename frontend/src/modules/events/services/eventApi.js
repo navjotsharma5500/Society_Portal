@@ -14,6 +14,8 @@ export const submitEvent = async (id) =>
 export const cancelEvent = async (id, reason) =>
   body(await apiClient.post(`/events/${id}/cancel`, { reason })).event;
 export const getLiveEventRequestUsage = async (excludeEventId) => body(await apiClient.get("/events/live-request-usage", { params: { excludeEventId } }));
+export const getEventProposalContext = async (societyId, { signal } = {}) =>
+  body(await apiClient.get("/events/proposal-context", { params: { societyId }, signal }));
 export const listAssignedEventReviews = async (params) =>
   body(await apiClient.get("/events/reviews/assigned-to-me", { params }));
 export const eventReviewCounts = async (societyId) =>

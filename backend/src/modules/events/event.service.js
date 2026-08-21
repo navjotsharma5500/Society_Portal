@@ -19,8 +19,10 @@ const mongoose = require("mongoose"),
     SPEAKER_STATUSES,
     WORKFLOW_STAGES,
     LIVE_EVENT_REQUEST_STATUSES,
+    PREVIOUS_SOURCES,
     amendableFields,
     diffFields,
+    resolveSanctionedBudgetAmount,
   } = require("./event.constants"),
   settings = require("../portalSettings/portalSetting.service");
 const fail = (message, status, code, fields) => {
@@ -136,6 +138,42 @@ const facultyContext = async (societyId) => {
   return {
     eligiblePresidentUserIds: presidents.map((x) => x._id),
     presidentNames: presidents.map((x) => x.displayName),
+  };
+};
+// Authoritative "most recent eligible previous Event" resolution — the ONLY source of truth for a
+// SYSTEM previousEvents row. Eligible means status === APPROVED (every other status, including
+// terminal REJECTED/CANCELLED, is excluded). Prefers the latest APPROVED Event in the given
+// (current) academic session; falls back to the latest APPROVED Event for the Society historically.
+// Ordering is deterministic (endDate desc, startDate desc, createdAt desc); Mongo sorts null/missing
+// dates below any real Date value in descending order, so events with real dates are always
+// preferred without extra null-handling.
+const previousEventSort = { endDate: -1, startDate: -1, createdAt: -1 };
+const previousEventSnapshot = async (societyId, academicSessionId, excludeEventId) => {
+  const baseQuery = {
+    societyId,
+    status: "APPROVED",
+    ...(excludeEventId ? { _id: { $ne: excludeEventId } } : {}),
+  };
+  const [inSession, anyApproved] = await Promise.all([
+    academicSessionId
+      ? Event.findOne({ ...baseQuery, academicSessionId }).sort(previousEventSort).lean()
+      : null,
+    Event.findOne(baseQuery).sort(previousEventSort).lean(),
+  ]);
+  const source = inSession || anyApproved;
+  if (!source) return null;
+  const budgetUsed =
+    source.budget?.deductionStatus === "POSTED" && Number(source.budget?.deductedAmount) > 0
+      ? Number(source.budget.deductedAmount)
+      : resolveSanctionedBudgetAmount(source.budget);
+  return {
+    source: PREVIOUS_SOURCES.SYSTEM,
+    sourceEventId: source._id,
+    eventCode: source.eventCode,
+    title: source.title,
+    startDate: source.startDate,
+    endDate: source.endDate,
+    budgetUsed,
   };
 };
 const numeric = (value) =>
@@ -359,14 +397,24 @@ const create = async ({ user, student, data }) => {
     if (!venue || !venue.buildingId || venue.buildingId.status !== "ACTIVE") fail("Selected venue is unavailable", 409, "EVENT_VENUE_UNAVAILABLE");
     venueSnapshot = { preferredVenueId: venue._id, preferredVenueName: venue.name, buildingNameSnapshot: venue.buildingId.name, venueTypeSnapshot: venue.venueType };
   }
+  const normalized = normalize(data);
+  // Backend authority over SYSTEM previous-Event history: a client can never assert "this row is
+  // system-verified". Any client-supplied SYSTEM row is discarded outright; the authoritative latest
+  // APPROVED-Event-in-this-Society snapshot is resolved independently here. Genuine MANUAL/legacy
+  // rows the Student entered are always retained.
+  const systemPreviousEvent = await previousEventSnapshot(data.societyId, academicSession._id);
+  normalized.previousEvents = [
+    ...(systemPreviousEvent ? [systemPreviousEvent] : []),
+    ...normalized.previousEvents.filter((row) => row.source !== PREVIOUS_SOURCES.SYSTEM),
+  ];
   const
     event = await Event.create({
       ...sequence,
-      ...normalize(data),
+      ...normalized,
       societyId: data.societyId,
       academicSessionId: academicSession._id,
       academicSession: academicSession.name,
-      venueRequirement: { ...normalize(data).venueRequirement, ...venueSnapshot },
+      venueRequirement: { ...normalized.venueRequirement, ...venueSnapshot },
       createdByUserId: user._id,
       createdByMembershipId: context.membership._id,
       createdFromRoleAssignmentId: context.assignment._id,
@@ -379,6 +427,24 @@ const create = async ({ user, student, data }) => {
     });
   await audit(event, "EVENT_CREATED", user._id, context.assignment._id);
   return populate(Event.findById(event._id)).lean();
+};
+// Lightweight preparation data the Create Event page needs BEFORE a draft exists: who the eligible
+// Faculty Presidents are, and the authoritative latest-approved-Event snapshot for this Society.
+// Authorization is the exact same Society-scoped check create() itself uses — a GLOBAL staff read
+// grant is deliberately NOT enough here, since this route also acts as the authorization check for
+// "may this caller even start a new Event proposal for this Society".
+const proposalContext = async (userId, societyId) => {
+  const [, academicSession] = await Promise.all([
+    accessContext(userId, societyId, "event.create"),
+    academicSessions.getCurrentAcademicSession({ required: true }),
+  ]);
+  const presidents = await workflow.resolveReviewers(WORKFLOW_STAGES.FACULTY_REVIEW, societyId);
+  const previousEvent = await previousEventSnapshot(societyId, academicSession._id);
+  return {
+    societyId,
+    facultyPresidents: presidents.map((x) => ({ userId: x._id, displayName: x.displayName })),
+    previousEvent,
+  };
 };
 const owned = async (userId, id, permission = "event.view") => {
   if (!oid(id)) fail("Event not found", 404, "EVENT_NOT_FOUND");
@@ -421,6 +487,15 @@ const update = async (userId, id, data) => {
   }
   const normalized = normalize({ ...event.toObject(), ...data });
   normalized.poc = protectedPoc;
+  // SYSTEM previousEvents rows are backend-originated and immutable by the client: whatever the
+  // client sends for a SYSTEM row (including none at all) is discarded, and the Event's existing
+  // stored SYSTEM row(s) — set authoritatively at creation time — are always reinstated as-is. The
+  // draft's SYSTEM snapshot is never silently recomputed on every save; only genuine MANUAL/legacy
+  // rows the Student entered are taken from the request.
+  normalized.previousEvents = [
+    ...(before.previousEvents || []).filter((row) => row.source === PREVIOUS_SOURCES.SYSTEM),
+    ...normalized.previousEvents.filter((row) => row.source !== PREVIOUS_SOURCES.SYSTEM),
+  ];
   Object.assign(event, normalized);
   if (!event.createdByAssignmentId && event.createdFromRoleAssignmentId)
     event.createdByAssignmentId = event.createdFromRoleAssignmentId;
@@ -644,17 +719,34 @@ const get = async (userId, id) => {
   const event = await Event.findById(id);
   if (!event) fail("Event not found", 404, "EVENT_NOT_FOUND");
   const globalAccess = await authz.hasPermission({ userId, permissionCode: "event_admin.view_all" });
-  let visibility;
+  // isGlobalAdminView tracks ONLY the true admin-oversight grant (event_admin.view_all), never the
+  // broader GLOBAL-reviewer read access below — it alone is allowed to bypass DRAFT privacy. A GLOBAL
+  // staff reviewer (ADoSA/DoSA/DoSA Staff) can read across Societies, but that is READ ACCESS to
+  // submitted/decided Events only; it must never leak another Student's still-private DRAFT.
+  let visibility, isGlobalAdminView = false;
   if (globalAccess.allowed) {
     visibility = globalAccess;
+    isGlobalAdminView = true;
   } else {
-    await accessContext(userId, event.societyId, "event.view");
-    visibility = await authz.hasPermission({ userId, societyId: event.societyId, permissionCode: "event.view" });
+    // GLOBAL staff reviewers (e.g. ADoSA/DoSA/DoSA Staff) hold a GLOBAL-scoped "event.view" grant
+    // with dataScope ALL — checking hasPermission WITHOUT a societyId only matches GLOBAL
+    // assignments, so this is exactly "does this user have society-independent read access". Such a
+    // user must be able to open any Event (e.g. from their review queue) without also holding an
+    // active Society membership, which accessContext() would otherwise wrongly require. Society-
+    // scoped users (Students, Presidents, ...) never get a GLOBAL grant here and fall through to the
+    // existing accessContext() membership check below, unchanged.
+    const globalView = await authz.hasPermission({ userId, permissionCode: "event.view" });
+    if (globalView.allowed && globalView.dataScope === "ALL") {
+      visibility = globalView;
+    } else {
+      await accessContext(userId, event.societyId, "event.view");
+      visibility = await authz.hasPermission({ userId, societyId: event.societyId, permissionCode: "event.view" });
+    }
   }
   if (
     event.status === "DRAFT" &&
     String(event.createdByUserId) !== String(userId) &&
-    visibility.dataScope !== "ALL"
+    !isGlobalAdminView
   )
     fail("Event not found", 404, "EVENT_NOT_FOUND");
   const value = await populate(Event.findById(event._id)).lean();
@@ -686,7 +778,7 @@ const list = async (userId, societyId, filters = {}) => {
     query.$or = [{ status: { $ne: "DRAFT" } }, { createdByUserId: userId }];
   const [items, totalItems] = await Promise.all([
       populate(Event.find(query))
-        .sort({ startDate: 1, createdAt: -1 })
+        .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
@@ -731,6 +823,7 @@ const listAll = async (filters = {}) => {
 module.exports = {
   proposalDateFields,
   liveRequestUsage,
+  proposalContext,
   create,
   update,
   submit,

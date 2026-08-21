@@ -42,6 +42,9 @@ const schedule = new mongoose.Schema(
         default: "MANUAL",
       },
       sourceEventId: { type: mongoose.Schema.Types.ObjectId, ref: "Event" },
+      // Denormalized display snapshot for a SYSTEM row (e.g. "EA137") so the read-only previous-Event
+      // card never needs a live join back to the source Event just to render its code.
+      eventCode: { type: String, trim: true, maxlength: 30 },
       title: { type: String, trim: true, maxlength: 200 },
       startDate: Date,
       endDate: Date,

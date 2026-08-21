@@ -273,8 +273,15 @@ export function EventAnnexureSection({ form, set }) {
   );
 }
 
+const previousEventDate = (value) => (value ? String(value).slice(0, 10) : "—");
 export function EventPlanningSection({ form, set, budgetOnly = false }) {
   const previous = form.previousEvents || [],
+    // SYSTEM rows are backend-originated and never client-editable — the Student can never assert
+    // "this is system-verified" data (source, sourceEventId, title, dates, budgetUsed are all
+    // read-only). Only MANUAL/legacy rows the Student typed are ever mutated here.
+    systemPrevious = previous.filter((row) => row.source === "SYSTEM"),
+    manualPrevious = previous.filter((row) => row.source !== "SYSTEM"),
+    setManual = (nextManual) => set("previousEvents", [...systemPrevious, ...nextManual]),
     budget = form.budget || { items: [] },
     items = budget.items || [];
   return (
@@ -285,71 +292,75 @@ export function EventPlanningSection({ form, set, budgetOnly = false }) {
           Only the budget below may be changed during budget rectification. Other proposal details are locked.
         </p>
       )}
-      {!budgetOnly && <h3>Previous events</h3>}
-      {!budgetOnly && previous.map((row, index) => (
-        <div className="event-row" key={index}>
-          <select
-            value={row.source || "MANUAL"}
-            onChange={(e) =>
-              set(
-                "previousEvents",
-                previous.map((item, i) =>
-                  i === index ? { ...item, source: e.target.value } : item
-                )
-              )
-            }
-          >
-            <option>MANUAL</option>
-            <option>SYSTEM</option>
-          </select>
-          <Input
-            placeholder="Event title / reference"
-            value={row.title}
-            onChange={(value) =>
-              set(
-                "previousEvents",
-                previous.map((item, i) =>
-                  i === index ? { ...item, title: value } : item
-                )
-              )
-            }
-          />
-          <Input
-            type="number"
-            placeholder="Budget used"
-            value={row.budgetUsed}
-            onChange={(value) =>
-              set(
-                "previousEvents",
-                previous.map((item, i) =>
-                  i === index ? { ...item, budgetUsed: Number(value) } : item
-                )
-              )
-            }
-          />
+      {!budgetOnly && (
+        <>
+          <h3>Previous approved Event</h3>
+          {systemPrevious.length > 0 ? (
+            systemPrevious.map((row, index) => (
+              <div className="event-card event-previous-system" key={row.sourceEventId || index}>
+                <div className="event-grid">
+                  <div>
+                    <strong>{row.eventCode}</strong>
+                    <small>{row.title}</small>
+                  </div>
+                  <div>
+                    <strong>{previousEventDate(row.startDate)} – {previousEventDate(row.endDate)}</strong>
+                    <small>Event dates</small>
+                  </div>
+                  <div>
+                    <strong>₹{row.budgetUsed || 0}</strong>
+                    <small>Approved / Utilized Budget</small>
+                  </div>
+                </div>
+                <p className="muted">
+                  Automatically linked from your Society's most recent approved Event — read-only.
+                </p>
+              </div>
+            ))
+          ) : (
+            <p className="muted">No previous approved portal Event found.</p>
+          )}
+          {manualPrevious.map((row, index) => (
+            <div className="event-row" key={index}>
+              <Input
+                placeholder="Event title / reference"
+                value={row.title}
+                onChange={(value) =>
+                  setManual(
+                    manualPrevious.map((item, i) =>
+                      i === index ? { ...item, title: value } : item
+                    )
+                  )
+                }
+              />
+              <Input
+                type="number"
+                placeholder="Budget used"
+                value={row.budgetUsed}
+                onChange={(value) =>
+                  setManual(
+                    manualPrevious.map((item, i) =>
+                      i === index ? { ...item, budgetUsed: Number(value) } : item
+                    )
+                  )
+                }
+              />
+              <button
+                type="button"
+                onClick={() => setManual(manualPrevious.filter((_, i) => i !== index))}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
           <button
             type="button"
-            onClick={() =>
-              set(
-                "previousEvents",
-                previous.filter((_, i) => i !== index)
-              )
-            }
+            className="event-secondary"
+            onClick={() => setManual(add(manualPrevious, { source: "MANUAL", title: "" }))}
           >
-            Remove
+            {systemPrevious.length > 0 ? "Add legacy previous event" : "Add previous event"}
           </button>
-        </div>
-      ))}
-      {!budgetOnly && (
-        <button
-          type="button"
-          className="event-secondary"
-          onClick={() =>
-            set("previousEvents", add(previous, { source: "MANUAL", title: "" }))
-          }
-        >
-          Add previous event
-        </button>
+        </>
       )}
       <h3>Estimated budget</h3>
       {items.map((row, index) => (
@@ -449,9 +460,20 @@ export function EventPlanningSection({ form, set, budgetOnly = false }) {
   );
 }
 
-export function EventGovernanceSection({ event }) {
-  const review = event?.facultyReviewContext || {};
-  const names = review.presidentNames || [];
+export function EventGovernanceSection({ event, proposalContext, proposalContextLoading = false }) {
+  // A brand-new UNSAVED Event has event === null, so it can never have a facultyReviewContext yet —
+  // that is not the same thing as "no President exists" and must never render the same warning as a
+  // genuine zero-President backend answer. For a new Event, the authoritative source is the
+  // proposal-context endpoint (fetched before any draft exists); once the Event is saved, its own
+  // saved facultyReviewContext snapshot is authoritative and is never silently replaced on re-render.
+  const isNewEvent = !event;
+  const presidents = isNewEvent
+    ? (proposalContext?.facultyPresidents || []).map((p) => ({ key: p.userId, name: p.displayName }))
+    : (event.facultyReviewContext?.presidentNames || []).map((name, index) => ({
+        key: `${name}-${index}`,
+        name,
+      }));
+  const showLoading = isNewEvent && proposalContextLoading;
   // New Events (and every new/resubmitted attempt) always route FACULTY_REVIEW -> DOSA_STAFF_REVIEW
   // -> ADOSA_REVIEW -> DOSA_REVIEW; Assistant no longer participates in Event approval. Historical
   // attempts that passed through the legacy ASSISTANT_REVIEW stage still keep that record in
@@ -465,10 +487,12 @@ export function EventGovernanceSection({ event }) {
   return (
     <section className="event-card">
       <h2>Faculty Presidents</h2>
-      {names.length ? (
+      {showLoading ? (
+        <p className="muted">Checking active Faculty President assignment…</p>
+      ) : presidents.length ? (
         <div className="event-grid">
-          {names.map((name) => (
-            <div key={name}>
+          {presidents.map(({ key, name }) => (
+            <div key={key}>
               <strong>{name}</strong>
               <small>Faculty President</small>
             </div>

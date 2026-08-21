@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Eye, RefreshCw, XCircle } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   Badge,
   Button,
@@ -26,7 +26,6 @@ import {
 } from "../services/approvalApi";
 import DecisionDialog from "../components/DecisionDialog";
 import { listRoleReferences } from "../../rbac/services/rbacApi";
-import { decideEventReview, listAssignedEventReviews } from "../../events/services/eventApi";
 import "../approvals.css";
 const tabs = [
     "Pending",
@@ -77,7 +76,7 @@ export default function ApprovalCenterPage() {
         },
         wantClaims = tab !== "Join Society Requests",
         wantJoins = tab !== "Existing Society Verification";
-      const [c, j, cc, jc, er] = await Promise.all([
+      const [c, j, cc, jc] = await Promise.all([
         wantClaims
           ? listClaimApprovals(params)
           : Promise.resolve({ items: [], pagination: { totalPages: 1 } }),
@@ -96,12 +95,10 @@ export default function ApprovalCenterPage() {
           submittedFrom,
           submittedTo,
         }),
-        listAssignedEventReviews({ page, limit: 10, status }),
       ]);
       const claims = c.items.map((x) => ({ ...x, approvalType: "CLAIM" })),
         joins = j.items.map((x) => ({ ...x, approvalType: "JOIN" })),
-        eventReviews = (er.items || []).map((x) => ({ ...x, approvalType: "EVENT" })),
-        combined = [...claims, ...joins, ...eventReviews].sort(
+        combined = [...claims, ...joins].sort(
           (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
         );
       setItems(combined);
@@ -109,11 +106,10 @@ export default function ApprovalCenterPage() {
         totalPages: Math.max(
           c.pagination?.totalPages || 1,
           j.pagination?.totalPages || 1
-          ,er.pagination?.totalPages || 1
         ),
       });
       setCounts({
-        pending: (cc.PENDING || 0) + (jc.PENDING || 0) + (status === "PENDING" ? er.pagination?.totalItems || eventReviews.length : 0),
+        pending: (cc.PENDING || 0) + (jc.PENDING || 0),
         claims: cc.PENDING || 0,
         joins: jc.PENDING || 0,
         completed: (cc.APPROVED || 0) + (jc.APPROVED || 0),
@@ -137,7 +133,6 @@ export default function ApprovalCenterPage() {
     () =>
       items.filter((x) => {
         const student = x.studentMasterId || {},
-          event = x.eventId || {},
           q = search.toLowerCase();
         return (
           !q ||
@@ -145,8 +140,6 @@ export default function ApprovalCenterPage() {
             student.name,
             student.rollNumber,
             student.email,
-            event.title,
-            event.eventCode,
           ].some((v) =>
             String(v || "")
               .toLowerCase()
@@ -159,9 +152,7 @@ export default function ApprovalCenterPage() {
   const open = async (item) => {
     try {
       setDetail(
-        item.approvalType === "EVENT"
-          ? { eventReview: item }
-          : item.approvalType === "CLAIM"
+        item.approvalType === "CLAIM"
           ? await getClaimApproval(item._id)
           : { request: await getJoinApproval(item._id) }
       );
@@ -171,14 +162,7 @@ export default function ApprovalCenterPage() {
   };
   const act = (item, action) => {
     const claim = item.approvalType === "CLAIM",
-      isEvent = item.approvalType === "EVENT",
-      map = isEvent
-        ? {
-            approve: ["Forward this event?", "Approve / Forward"],
-            reject: ["Reject this event?", "Reject"],
-            "request-changes": ["Request event changes", "Request Changes"],
-          }
-        : claim
+      map = claim
         ? {
             approve: ["Approve society participation?", "Approve"],
             reject: ["Reject society participation?", "Reject"],
@@ -197,17 +181,7 @@ export default function ApprovalCenterPage() {
   const confirm = async (payload) => {
     setSaving(true);
     try {
-      if (decision.item.approvalType === "EVENT")
-        await decideEventReview(
-          decision.item._id,
-          decision.action === "approve"
-            ? "APPROVE"
-            : decision.action === "reject"
-            ? "REJECT"
-            : "REQUEST_CHANGES",
-          payload.reason || payload.remarks
-        );
-      else if (decision.item.approvalType === "CLAIM")
+      if (decision.item.approvalType === "CLAIM")
         await decideClaim(decision.item._id, decision.action, payload);
       else await decideJoin(decision.item._id, decision.action, payload);
       notify("Decision saved.", "success");
@@ -326,13 +300,7 @@ export default function ApprovalCenterPage() {
               </thead>
               <tbody>
                 {shown.map((x) => {
-                  const eventApproval = x.approvalType === "EVENT",
-                    s = eventApproval
-                      ? {
-                          name: x.eventId?.title,
-                          rollNumber: x.eventId?.eventCode,
-                        }
-                      : x.studentMasterId || {},
+                  const s = x.studentMasterId || {},
                     claim = x.approvalType === "CLAIM";
                   return (
                     <tr key={`${x.approvalType}-${x._id}`}>
@@ -341,23 +309,14 @@ export default function ApprovalCenterPage() {
                         <small>{s.rollNumber || s.email}</small>
                       </td>
                       <td>
-                        {eventApproval
-                          ? "Event Approval"
-                          : claim
+                        {claim
                           ? "Existing Verification"
                           : "Join Request"}
                       </td>
                       <td>
-                        {
-                          (eventApproval ? x.eventId?.societyId : x.societyId)
-                            ?.name
-                        }
+                        {x.societyId?.name}
                         <small>
-                          {eventApproval
-                            ? x.assignedRoleCode
-                            : claim
-                            ? x.claimedRoleId?.name
-                            : "Member"}
+                          {claim ? x.claimedRoleId?.name : "Member"}
                         </small>
                       </td>
                       <td>{fmt(x.updatedAt)}</td>
@@ -394,17 +353,13 @@ export default function ApprovalCenterPage() {
                                 onClick={() =>
                                   act(
                                     x,
-                                    claim || eventApproval
+                                    claim
                                       ? "request-changes"
                                       : "request-clarification"
                                   )
                                 }
                               >
-                                {eventApproval
-                                  ? "Changes"
-                                  : claim
-                                  ? "Correction"
-                                  : "Clarify"}
+                                {claim ? "Correction" : "Clarify"}
                               </Button>
                             </>
                           )}
@@ -459,35 +414,6 @@ export default function ApprovalCenterPage() {
   );
 }
 function ApprovalDetail({ data }) {
-  if (data.eventReview) {
-    const r = data.eventReview,
-      e = r.eventId;
-    return (
-      <div className="approval-detail">
-        <h3>{e.title || "Untitled event"}</h3>
-        <p>
-          {e.eventCode} · {e.societyId?.name}
-        </p>
-        <Link className="button button-primary" to={`/event-reviews/${e._id}`}>
-          Open Full Event
-        </Link>
-        <dl>
-          <dt>Stage</dt>
-          <dd>{r.stage.replaceAll("_", " ")}</dd>
-          <dt>Status</dt>
-          <dd>{r.status}</dd>
-          <dt>Attempt</dt>
-          <dd>{r.attempt}</dd>
-          <dt>Submitted</dt>
-          <dd>{fmt(e.submittedAt)}</dd>
-        </dl>
-        <p>
-          Use the queue actions to forward, request changes, or reject this
-          proposal.
-        </p>
-      </div>
-    );
-  }
   const x = data.claim || data.request,
     s = x.studentMasterId || {},
     claim = Boolean(data.claim);

@@ -9,6 +9,7 @@ import {
   cancelEvent,
   createEvent,
   getEvent,
+  getEventProposalContext,
   getLiveEventRequestUsage,
   listSocietyEvents,
   submitEvent,
@@ -151,13 +152,18 @@ export function SocietyEventsPage() {
 
 export function EventEditorPage() {
   const { eventId } = useParams(),
-    { selectedContext } = useOutletContext(),
+    { selectedContext, selectSocietyById } = useOutletContext(),
     navigate = useNavigate(),
     [form, setForm] = useState(blank),
     [event, setEvent] = useState(null),
     [error, setError] = useState(""),
     [fieldErrors, setFieldErrors] = useState([]),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [proposalContext, setProposalContext] = useState(null),
+    [proposalContextLoading, setProposalContextLoading] = useState(false),
+    eventSocietyId = event?.societyId?._id || event?.societyId || null,
+    selectedSocietyId = selectedContext?.societyId || null,
+    canCreateForSelectedSociety = permission(selectedContext, "event.create");
   useEffect(() => {
     if (eventId)
       getEvent(eventId)
@@ -167,6 +173,41 @@ export function EventEditorPage() {
         })
         .catch((e) => setError(e.readableMessage));
   }, [eventId]);
+  // Direct-URL / already-saved-draft context sync: the Society tab always follows the Event's own
+  // Society, never the other way around. Depends on the primitive id (not the populated object), so
+  // it only re-fires when the Society actually changes, not on every refetch of the same Event.
+  useEffect(() => {
+    if (eventSocietyId) selectSocietyById?.(eventSocietyId);
+  }, [eventSocietyId, selectSocietyById]);
+  // Proposal-context (Faculty Presidents + latest approved previous Event) for a brand-new, unsaved
+  // Event only. An already-saved draft keeps using its own saved facultyReviewContext /
+  // previousEvents snapshot — this must never silently recompute on every render/reopen. Guards
+  // against a stale response when the Student switches Society mid-creation (Issue 12): an
+  // AbortController cancels the in-flight request, and the abort branch never touches state.
+  useEffect(() => {
+    if (eventId || !selectedSocietyId || !canCreateForSelectedSociety) return;
+    const controller = new AbortController();
+    setProposalContextLoading(true);
+    getEventProposalContext(selectedSocietyId, { signal: controller.signal })
+      .then((data) => {
+        setProposalContext(data);
+        setForm((current) => ({
+          ...current,
+          previousEvents: [
+            ...(data.previousEvent ? [data.previousEvent] : []),
+            ...(current.previousEvents || []).filter((row) => row.source !== "SYSTEM"),
+          ],
+        }));
+      })
+      .catch((e) => {
+        if (controller.signal.aborted || e.code === "ERR_CANCELED") return;
+        setError(e.readableMessage);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setProposalContextLoading(false);
+      });
+    return () => controller.abort();
+  }, [eventId, selectedSocietyId, canCreateForSelectedSociety]);
   const set = (key, value) =>
       setForm((current) => ({ ...current, [key]: value })),
     save = async () => {
@@ -316,7 +357,7 @@ export function EventEditorPage() {
         <EventPlanningSection form={form} set={set} budgetOnly={budgetOnly} />
       </div>
       <div id="event-faculty">
-        <EventGovernanceSection event={event} />
+        <EventGovernanceSection event={event} proposalContext={proposalContext} proposalContextLoading={proposalContextLoading} />
       </div>
       <div className="event-actions">
         <button className="event-secondary" disabled={saving} onClick={save}>
@@ -338,16 +379,23 @@ const Value = ({ label, children }) => (
 );
 export function EventDetailPage({ review = false }) {
   const { eventId } = useParams(),
+    { selectSocietyById } = useOutletContext(),
     navigate = useNavigate(),
     [event, setEvent] = useState(null),
     [error, setError] = useState(""),
     [fieldErrors, setFieldErrors] = useState([]),
-    [liveUsage, setLiveUsage] = useState(null);
+    [liveUsage, setLiveUsage] = useState(null),
+    eventSocietyId = event?.societyId?._id || event?.societyId || null;
   useEffect(() => {
     getEvent(eventId)
       .then(setEvent)
       .catch((e) => setError(e.readableMessage));
   }, [eventId]);
+  // Directly opening an Event URL synchronizes the Society tab to that Event's own Society — the
+  // primitive id dependency means this only re-fires on an actual Society change, not on refetch.
+  useEffect(() => {
+    if (eventSocietyId) selectSocietyById?.(eventSocietyId);
+  }, [eventSocietyId, selectSocietyById]);
   useEffect(() => { if (review) getLiveEventRequestUsage(eventId).then(setLiveUsage).catch(() => {}); }, [eventId, review]);
   const submit = async () => {
     try {

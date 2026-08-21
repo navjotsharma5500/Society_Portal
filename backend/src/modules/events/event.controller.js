@@ -4,6 +4,7 @@ const service = require("./event.service"),
     res.status(status).json({ success: true, data });
 module.exports = {
   liveRequestUsage: async (req, res) => ok(res, await service.liveRequestUsage(req.auth.userId, req.query.excludeEventId)),
+  proposalContext: async (req, res) => ok(res, await service.proposalContext(req.auth.userId, req.query.societyId)),
   create: async (req, res) =>
     ok(
       res,
